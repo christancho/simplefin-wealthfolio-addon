@@ -128,7 +128,7 @@ The `dev→stg` PR is created automatically on every merge to `dev`. The `stg→
 | **Ready** | PM triages and prioritises | Manual — PM moves card |
 | **In Progress** | `feature/*` branch pushed | Automated — GitHub Action |
 | **In Review** | PR opened with `Closes #N` | Automated — GitHub Action |
-| **Done** | PR merged to `dev` | Automated — built-in GitHub Projects |
+| **Done** | PR merged to `dev`, or issue closed | Automated — `pr-to-stg.yml` / `issue-closed-to-done.yml` |
 
 Two manual moves in the whole flow: PM moves **Backlog → Ready** during grooming; developer moves nothing — branch creation and PR events handle everything else.
 
@@ -138,23 +138,50 @@ Use a **Blocked** label (not a column) when an issue is stuck. An issue can be `
 
 ## GitHub Actions Workflows
 
-Five workflows wire up the automation. Each reads `.github/project-config.json` for node IDs and uses `GH_PAT` (a personal access token with `project` scope) as `GH_TOKEN`.
+Six workflows wire up the automation. Each reads `.github/project-config.json` for node IDs and uses `GH_PAT` (a personal access token with `project` scope) as `GH_TOKEN`.
 
 | File | Trigger | Action |
 |---|---|---|
 | `issue-to-backlog.yml` | Issue opened | Adds issue to board → Backlog |
 | `issue-to-in-progress.yml` | `feature/*` branch pushed | Issue → In Progress |
 | `issue-to-in-review.yml` | PR opened → `dev` | Issues → In Review |
-| `pr-to-stg.yml` | PR merged → `dev` | Issues → Done + create `dev→stg` PR |
+| `pr-to-stg.yml` | PR merged → `dev` | Issues → Done, **close issues**, create `dev→stg` PR |
+| `issue-closed-to-done.yml` | Issue closed | Issue → Done |
 | `pr-to-main.yml` | PR merged → `stg` | Create `stg→main` PR |
 
 The helper script `.github/scripts/move-issue.sh <issue_number> "<Status Name>"` handles the GraphQL mutation. Workflows call it in a loop over extracted issue numbers.
+
+### Why issue closing is an Action, not a board workflow
+
+GitHub Projects ships built-in **Auto-close issue** and **Item closed**
+workflows that would keep board status and issue state in agreement. Both are
+disabled on this board, and **they cannot be enabled through the API** — the
+GraphQL schema exposes only `deleteProjectV2Workflow`, with no create or
+update mutation. The `projects_v2_item` webhook is likewise unavailable here,
+since it is organization-scoped and this project is user-owned.
+
+So the invariant is enforced by Actions instead, which has the side benefit of
+being version-controlled and reviewable:
+
+- **Issue closed → status Done** — `issue-closed-to-done.yml`
+- **Status Done → issue closed** — `pr-to-stg.yml`, which is the only
+  automated path that sets Done
+
+One gap remains by construction: manually dragging a card to Done in the
+project UI will *not* close the issue. Either close the issue directly (the
+Action then moves the card for you), or enable the built-in **Auto-close
+issue** workflow by hand in Settings → Workflows.
+
+Note also that GitHub only honours a PR's `Closes #N` keyword on merges into
+the **default branch**. Feature branches here merge into `dev`, so the keyword
+never fires on its own — `pr-to-stg.yml` greps those lines for issue numbers
+and closes the issues explicitly.
 
 ---
 
 ## Project Config File
 
-`.github/project-config.json` stores the GitHub Projects node IDs so workflows don't hardcode them. Written automatically by `setup.sh` — do not edit manually.
+`.github/project-config.json` stores the GitHub Projects node IDs so workflows don't hardcode them. It was generated during one-time repo setup — do not edit manually.
 
 ```json
 {
@@ -174,7 +201,7 @@ The helper script `.github/scripts/move-issue.sh <issue_number> "<Status Name>"`
 
 ## Branch Protection Rules
 
-Applied automatically by `setup.sh`. To apply manually via the `gh` CLI:
+Applied during one-time repo setup. To apply or re-apply via the `gh` CLI:
 
 ```bash
 gh api repos/{owner}/{repo}/branches/{branch}/protection \
@@ -230,4 +257,7 @@ Plus GitHub's built-in fields: Assignees, Labels, Milestone, Linked pull request
 
 ## Setting Up
 
-See `README.md` — `setup.sh` handles everything in one command.
+This repo is already set up: `main`/`stg`/`dev` exist and are protected, the
+project board is created, and `.github/project-config.json` is populated. The
+one-time `setup.sh` bootstrap script has been removed now that it has served
+its purpose.

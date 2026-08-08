@@ -22,15 +22,27 @@ jobs:
           ISSUES=$(echo "$BODY" | grep -oiP '(?:closes|fixes|resolves)\s+#\K\d+' | tr '\n' ' ')
           echo "list=$ISSUES" >> "$GITHUB_OUTPUT"
 
-      - name: Move issues to Done
+      - name: Move issues to Done and close them
         if: steps.issues.outputs.list != ''
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          # Via env, not inline interpolation, so the list is never spliced
+          # into the shell command.
+          ISSUE_LIST: ${{ steps.issues.outputs.list }}
         run: |
-          for ISSUE in ${{ steps.issues.outputs.list }}; do
+          for ISSUE in $ISSUE_LIST; do
             bash .github/scripts/move-issue.sh "$ISSUE" "Done"
+
+            # GitHub only honours a PR's `Closes #N` on merges into the default
+            # branch. Feature branches here merge into `dev`, so the keyword
+            # never fires and the issue would stay open while the board says
+            # Done. Close it explicitly to keep the two in agreement.
+            if [ "$(gh issue view "$ISSUE" --json state --jq .state)" = "OPEN" ]; then
+              gh issue close "$ISSUE" --reason completed
+              echo "Closed issue #$ISSUE"
+            fi
           done
 
       - name: Create dev→stg PR if none open
