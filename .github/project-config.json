@@ -1,11 +1,11 @@
 {
-  "project_node_id": "",
-  "status_field_id": "",
+  "project_node_id": "PVT_kwHOAOpJ284Bftcf",
+  "status_field_id": "PVTSSF_lAHOAOpJ284BftcfzhZ-bEw",
   "options": {
-    "Backlog":     "",
-    "Ready":       "",
-    "In Progress": "",
-    "In Review":   "",
-    "Done":        ""
+    "Backlog": "32c71717",
+    "Ready": "5dfb800c",
+    "In Progress": "5cef5228",
+    "In Review": "907e8a4e",
+    "Done": "b597a745"
   }
 }

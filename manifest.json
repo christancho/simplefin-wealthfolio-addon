@@ -1,0 +1,81 @@
+{
+  "id": "simplefin-sync",
+  "name": "SimpleFIN Sync",
+  "version": "1.0.0",
+  "description": "Sync bank, credit-card and investment data from SimpleFIN Bridge into Wealthfolio.",
+  "author": "christancho",
+  "main": "dist/addon.js",
+  "sdkVersion": "3.6.2",
+  "minWealthfolioVersion": "3.6.2",
+  "enabled": true,
+  "repository": "https://github.com/christancho/simplefin-wealthfolio-addon",
+  "contributes": {
+    "routes": [{ "id": "simplefin-sync" }],
+    "links": {
+      "sidebar": [
+        {
+          "id": "simplefin-sync",
+          "route": "simplefin-sync",
+          "label": "SimpleFIN Sync",
+          "icon": "plugs-connected",
+          "order": 100
+        }
+      ]
+    }
+  },
+  "network": {
+    "allowedHosts": ["bridge.simplefin.org", "beta-bridge.simplefin.org"]
+  },
+  "hostDependencies": {
+    "@tanstack/react-query": "^5.90.0",
+    "@wealthfolio/addon-sdk": "^3.6.2",
+    "@wealthfolio/ui": "^3.6.0",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.561.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.7.0"
+  },
+  "permissions": [
+    {
+      "category": "network",
+      "functions": [{ "name": "request", "isDeclared": true, "isDetected": false }],
+      "purpose": "Fetch accounts, transactions and holdings from the SimpleFIN Bridge."
+    },
+    {
+      "category": "secrets",
+      "functions": [
+        { "name": "set", "isDeclared": true, "isDetected": false },
+        { "name": "get", "isDeclared": true, "isDetected": false },
+        { "name": "delete", "isDeclared": true, "isDetected": false }
+      ],
+      "purpose": "Store the SimpleFIN access credentials in the system keyring."
+    },
+    {
+      "category": "accounts",
+      "functions": [
+        { "name": "getAll", "isDeclared": true, "isDetected": false },
+        { "name": "create", "isDeclared": true, "isDetected": false }
+      ],
+      "purpose": "List Wealthfolio accounts to map against, and create new ones on request."
+    },
+    {
+      "category": "activities",
+      "functions": [
+        { "name": "checkImport", "isDeclared": true, "isDetected": false },
+        { "name": "import", "isDeclared": true, "isDetected": false }
+      ],
+      "purpose": "Import cash transactions fetched from SimpleFIN."
+    },
+    {
+      "category": "snapshots",
+      "functions": [
+        { "name": "checkImport", "isDeclared": true, "isDetected": false },
+        { "name": "importSnapshots", "isDeclared": true, "isDetected": false }
+      ],
+      "purpose": "Import holdings snapshots for investment accounts."
+    }
+  ],
+  "keywords": ["wealthfolio", "addon", "simplefin", "sync", "banking"],
+  "license": "MIT"
+}
