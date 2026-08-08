@@ -1,0 +1,31 @@
+name: On issue closed — move to Done
+
+# Replaces the built-in "Item closed" project workflow, which cannot be enabled
+# through the API (GraphQL exposes only deleteProjectV2Workflow, no update).
+# As an Action the board/issue invariant is version-controlled and reviewable
+# rather than a toggle someone has to remember to flip.
+#
+# Invariant: the project item's status and the issue's open/closed state agree.
+# This side handles: issue closed -> status Done.
+# The other side (status Done -> issue closed) is handled in pr-to-stg.yml,
+# which is the only automated path that sets Done.
+
+on:
+  issues:
+    types: [closed]
+
+jobs:
+  move-to-done:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Move closed issue to Done
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          # Passed via env rather than inline interpolation so the value is
+          # never spliced into the shell command.
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: bash .github/scripts/move-issue.sh "$ISSUE_NUMBER" "Done"
