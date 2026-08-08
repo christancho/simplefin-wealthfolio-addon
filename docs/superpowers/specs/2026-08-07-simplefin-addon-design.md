@@ -79,18 +79,63 @@ for self-hosted Wealthfolio (Docker, `apps/server`) as well as desktop.
    `storage`
 6. Re-render history/diagnostics from the updated `storage` state
 
-## Open question: idempotency
+## Resolved: idempotency
 
-wf-simplefin is stateless — it relies on Wealthfolio's own
+**Verified against `@wealthfolio/addon-sdk@3.6.2` type definitions
+(2026-08-07). The answer is no — this addon cannot be stateless.**
+
+wf-simplefin is stateless: it relies on Wealthfolio's own
 `sourceSystem`/`sourceRecordId` dedupe (the same mechanism its Connect broker
-sync uses) so re-pushing the same transaction is a no-op, with no local
-ledger to maintain. It is not yet confirmed whether `activities.import()` /
-`checkImport()` expose the same dedupe fields through the addon API as the
-REST API does. This needs to be verified against the `ActivityImport` /
-`ImportActivitiesResult` types (and ideally a live test) early in
-implementation — it determines whether this addon can stay equally
-stateless, or needs to track what it has already pushed itself (e.g. via
-`storage`).
+sync uses), so re-pushing the same transaction is a no-op with no local ledger
+to maintain. The addon API does **not** expose those fields:
+
+- `ActivityImport` (`data-types.d.ts:270-308`) — the only input shape accepted
+  by `activities.import()` and `.checkImport()` — has no `sourceSystem`, no
+  `sourceRecordId`, and no `idempotencyKey`.
+- Those three fields exist only on `Activity` (`:138-141`) and
+  `ActivityDetails` (`:181-183`), both read/stored models, and on
+  `ImportRun.sourceSystem` (`:808`).
+- `HostAPI` (`host-api.d.ts:665-708`) exposes no import-run or broker-sync
+  surface that would let an addon set them another way.
+
+What the SDK does offer is host-side duplicate detection: `checkImport()`
+returns rows annotated with `duplicateOfId` / `duplicateOfLineNumber`,
+`import()` accepts `forceImport`, and `ImportActivitiesSummary` reports a
+`duplicates` count. The matching heuristic is host-internal and unverified, so
+it is treated as a safety net, not as the primary mechanism.
+
+### Decision: per-account watermark + recent-id window
+
+Cash-transaction idempotency is owned by the addon, stored in `storage`:
+
+- **Watermark** — per mapped account, the last successfully synced posted
+  date. Subsequent syncs only request/push transactions at or after it.
+- **Recent-id window** — a small rolling set of recently-seen SimpleFIN
+  transaction ids, so transactions that post late (dated before the
+  watermark but appearing after it was written) are still recognised as
+  already-pushed rather than re-sent or silently skipped.
+- `checkImport()`'s duplicate flags remain a secondary guard; a row the host
+  marks duplicate is not force-imported.
+- A **reset/backfill** path must exist for when the watermark drifts or an
+  account is re-mapped.
+
+This is bounded by construction, which matters because of a `StorageAPI`
+constraint the original design did not account for.
+
+### `StorageAPI` limits (verified)
+
+Keys are ≤128 characters from `[A-Za-z0-9_.:-]`; values are capped at roughly
+250 KB each, and the SDK docs explicitly direct addons to "use many small keys
+rather than one large blob." A full ledger of every synced transaction id would
+outgrow this on a multi-year, multi-account history — the watermark design
+stays comfortably inside it. `localStorage` is unavailable in the sandboxed
+opaque-origin iframe, so `storage` is the only durable option.
+
+### Holdings are unaffected
+
+Snapshots need no local state: `snapshots.checkImport()` returns
+`CheckSnapshotImportResult.existingDates`, giving a host-side idempotency check
+for free. The statefulness above is confined to cash transactions.
 
 ## Error handling & testing
 
