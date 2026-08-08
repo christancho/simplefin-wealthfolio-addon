@@ -56,3 +56,8 @@ credentials.json
 # Package manager locks (keep only one — delete lines you don't use)
 # yarn.lock
 # pnpm-lock.yaml
+
+# Vendored agent skills. `skills-lock.json` is committed so the set is
+# reproducible; the fetched content itself is not, same as node_modules.
+.agents/
+.claude/skills/

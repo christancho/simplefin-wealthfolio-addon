@@ -1,0 +1,4 @@
+# esbuild's postinstall fetches its platform-native binary. Vite and Vitest
+# cannot run without it, so this build script is approved deliberately.
+allowBuilds:
+  esbuild: true
