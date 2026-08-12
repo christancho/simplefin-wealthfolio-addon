@@ -1,0 +1,197 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { ActivityImport } from '@wealthfolio/addon-sdk';
+import { createMockHost } from '../../test/mockHost';
+import type { AccountMapping } from '../storage/config';
+import { emptyWatermark } from '../storage/watermark';
+import { syncCashAccount, toActivityImport } from './activities';
+
+const mapping: AccountMapping = {
+  sfAccountId: 'ACT-1',
+  wfAccountId: 'WF-1',
+  mode: 'CASH',
+  sfAccountName: 'Checking',
+  orgName: 'Test Bank',
+};
+
+const txn = (over: Partial<Record<string, unknown>> = {}) => ({
+  id: 'TXN-1',
+  posted: 1754438400,
+  amount: '-42.10',
+  description: 'COFFEE',
+  payee: 'Blue Bottle',
+  memo: null,
+  pending: false,
+  ...over,
+});
+
+describe('toActivityImport', () => {
+  it('maps a negative amount to a WITHDRAWAL with positive magnitude', () => {
+    const activity = toActivityImport(txn() as never, mapping, 'USD');
+    expect(activity.activityType).toBe('WITHDRAWAL');
+    expect(activity.amount).toBe('42.10');
+    expect(activity.accountId).toBe('WF-1');
+    expect(activity.currency).toBe('USD');
+  });
+
+  it('maps a positive amount to a DEPOSIT', () => {
+    const activity = toActivityImport(txn({ amount: '2000.00' }) as never, mapping, 'USD');
+    expect(activity.activityType).toBe('DEPOSIT');
+    expect(activity.amount).toBe('2000.00');
+  });
+
+  it('keeps the amount as a string to avoid float rounding', () => {
+    const activity = toActivityImport(txn({ amount: '-0.1' }) as never, mapping, 'USD');
+    expect(typeof activity.amount).toBe('string');
+    expect(activity.amount).toBe('0.1');
+  });
+
+  it('prefers payee over description for the comment, falling back to description', () => {
+    expect(toActivityImport(txn() as never, mapping, 'USD').comment).toBe('Blue Bottle');
+    expect(toActivityImport(txn({ payee: null }) as never, mapping, 'USD').comment).toBe('COFFEE');
+  });
+
+  it('converts the epoch posted date to an ISO date', () => {
+    const activity = toActivityImport(txn() as never, mapping, 'USD');
+    expect(activity.date).toBe('2025-08-06');
+  });
+});
+
+describe('syncCashAccount', () => {
+  const account = (transactions: unknown[]) => ({
+    id: 'ACT-1',
+    name: 'Checking',
+    currency: 'USD',
+    balance: '100.00',
+    balanceDate: 1754524800,
+    orgName: 'Test Bank',
+    transactions,
+    holdings: [],
+  });
+
+  it('skips pending transactions', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a) => a);
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R1',
+      summary: { total: 0, imported: 0, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+    }));
+
+    await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn({ pending: true })]) as never,
+      emptyWatermark(),
+    );
+
+    expect(host.api.activities.import).not.toHaveBeenCalled();
+  });
+
+  it('skips transactions already in the recent-id window', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a) => a);
+
+    await syncCashAccount(host.api, mapping, account([txn()]) as never, {
+      lastPosted: 1754438400,
+      recentIds: ['TXN-1'],
+    });
+
+    expect(host.api.activities.import).not.toHaveBeenCalled();
+  });
+
+  it('validates via checkImport before importing', async () => {
+    const host = createMockHost();
+    const order: string[] = [];
+    host.api.activities.checkImport = vi.fn(async (a) => {
+      order.push('check');
+      return a;
+    });
+    host.api.activities.import = vi.fn(async () => {
+      order.push('import');
+      return {
+        activities: [],
+        importRunId: 'R1',
+        summary: {
+          total: 1,
+          imported: 1,
+          skipped: 0,
+          duplicates: 0,
+          assetsCreated: 0,
+          success: true,
+        },
+      };
+    });
+
+    await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark());
+    expect(order).toEqual(['check', 'import']);
+  });
+
+  it('does not import rows the host flagged as duplicates', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) =>
+      a.map((row) => ({ ...row, duplicateOfId: 'EXISTING', isValid: true })),
+    );
+    host.api.activities.import = vi.fn();
+
+    const { result } = await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn()]) as never,
+      emptyWatermark(),
+    );
+
+    expect(host.api.activities.import).not.toHaveBeenCalled();
+    expect(result.duplicates).toBe(1);
+  });
+
+  it('does not import rows checkImport marked invalid', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) =>
+      a.map((row) => ({ ...row, isValid: false, errors: { amount: ['bad'] } })),
+    );
+    host.api.activities.import = vi.fn();
+
+    const { result } = await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn()]) as never,
+      emptyWatermark(),
+    );
+
+    expect(host.api.activities.import).not.toHaveBeenCalled();
+    expect(result.skipped).toBe(1);
+  });
+
+  it('advances the watermark only over transactions actually imported', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a) => a);
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R1',
+      summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+    }));
+
+    const { watermark } = await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn()]) as never,
+      emptyWatermark(),
+    );
+
+    expect(watermark.lastPosted).toBe(1754438400);
+    expect(watermark.recentIds).toContain('TXN-1');
+  });
+
+  it('leaves the watermark untouched when the import throws', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a) => a);
+    host.api.activities.import = vi.fn(async () => {
+      throw new Error('host exploded');
+    });
+
+    const before = emptyWatermark();
+    await expect(
+      syncCashAccount(host.api, mapping, account([txn()]) as never, before),
+    ).rejects.toThrow(/host exploded/);
+  });
+});
