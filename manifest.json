@@ -47,9 +47,10 @@
       "functions": [
         { "name": "set", "isDeclared": true, "isDetected": false },
         { "name": "get", "isDeclared": true, "isDetected": false },
+        { "name": "use", "isDeclared": true, "isDetected": false },
         { "name": "delete", "isDeclared": true, "isDetected": false }
       ],
-      "purpose": "Store the SimpleFIN access credentials in the system keyring."
+      "purpose": "Store the SimpleFIN access credentials in the system keyring, and let the host attach them to brokered SimpleFIN Bridge requests without exposing the plaintext to the addon."
     },
     {
       "category": "accounts",
