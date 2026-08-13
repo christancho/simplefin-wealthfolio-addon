@@ -67,6 +67,11 @@ export function CreateAccountDialog({
         trackingMode: draft.trackingMode,
         provider: KEY_PREFIX,
         providerAccountId: sfAccount.id,
+        // The backend's create endpoint requires these even though they're
+        // normally server-computed; the addon-sdk's Account type doesn't
+        // surface that its `create()` payload diverges from its response shape.
+        isDefault: false,
+        isActive: true,
       });
       onCreated(account);
     } catch (err) {

@@ -1,11 +1,17 @@
 import type { Account, HostAPI } from '@wealthfolio/addon-sdk';
-import { Alert, AlertDescription } from '@wealthfolio/ui';
+import { Alert, AlertDescription, Button } from '@wealthfolio/ui';
 import { useEffect, useState } from 'react';
 import { AccountMapTable } from '../components/AccountMapTable';
+import { BridgeErrorBanner } from '../components/BridgeErrorBanner';
+import { HistoryList } from '../components/HistoryList';
 import { SetupCard } from '../components/SetupCard';
+import { SyncSummary } from '../components/SyncSummary';
 import { fetchAccounts } from '../lib/simplefin/client';
 import type { SfAccount } from '../lib/simplefin/parse';
+import { bridgeDashboardUrl } from '../lib/simplefin/url';
 import { readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
+import { readHistory, type SyncRun } from '../lib/storage/history';
+import { runSync } from '../lib/sync/run';
 
 export interface SyncPageProps {
   api: HostAPI;
@@ -16,6 +22,10 @@ export function SyncPage({ api }: SyncPageProps) {
   const [sfAccounts, setSfAccounts] = useState<SfAccount[]>([]);
   const [wfAccounts, setWfAccounts] = useState<Account[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<SyncRun | null>(null);
+  const [history, setHistory] = useState<SyncRun[]>([]);
 
   async function loadConfig() {
     try {
@@ -35,14 +45,32 @@ export function SyncPage({ api }: SyncPageProps) {
     const baseUrl = config.baseUrl;
 
     setError(null);
-    Promise.all([fetchAccounts(api.network, baseUrl, {}), api.accounts.getAll()])
-      .then(([{ accounts }, wfAccountList]) => {
+    Promise.all([fetchAccounts(api.network, baseUrl, {}), api.accounts.getAll(), readHistory(api)])
+      .then(([{ accounts }, wfAccountList, historyList]) => {
         setSfAccounts(accounts);
         setWfAccounts(wfAccountList);
+        setHistory(historyList);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config?.baseUrl]);
+
+  async function handleSync() {
+    if (!config?.baseUrl) return;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const run = await runSync(api, config);
+      setLastRun(run);
+      setHistory(await readHistory(api));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      api.logger.error(`[simplefin] sync failed: ${message}`);
+      setSyncError(message);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function persistMappings(mappings: AccountMapping[]) {
     if (!config) return;
@@ -84,6 +112,23 @@ export function SyncPage({ api }: SyncPageProps) {
         onChange={persistMappings}
         onAccountCreated={(account) => setWfAccounts((prev) => [...prev, account])}
       />
+      <div className="space-y-2">
+        <Button onClick={handleSync} disabled={syncing}>
+          {syncing ? 'Syncing…' : 'Sync now'}
+        </Button>
+        {syncError && (
+          <Alert variant="destructive" role="alert">
+            <AlertDescription>{syncError}</AlertDescription>
+          </Alert>
+        )}
+      </div>
+      {lastRun && (
+        <>
+          <BridgeErrorBanner errors={lastRun.bridgeErrors} dashboardUrl={bridgeDashboardUrl(config.baseUrl)} />
+          <SyncSummary run={lastRun} />
+        </>
+      )}
+      <HistoryList runs={history} />
     </div>
   );
 }
