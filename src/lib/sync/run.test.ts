@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActivityImport } from '@wealthfolio/addon-sdk';
 import { createMockHost } from '../../test/mockHost';
 import type { SyncConfig } from '../storage/config';
+import { writeWatermark } from '../storage/watermark';
 import { runSync } from './run';
 
 const config: SyncConfig = {
@@ -22,6 +23,7 @@ const config: SyncConfig = {
       orgName: 'Bank B',
     },
   ],
+  lookbackDays: 30,
 };
 
 const bridgePayload = {
@@ -146,5 +148,44 @@ describe('runSync', () => {
   it('throws when there is no configured base URL', async () => {
     const host = okHost();
     await expect(runSync(host.api, { ...config, baseUrl: null })).rejects.toThrow(/not connected/i);
+  });
+
+  it('reaches back at least lookbackDays even when a sibling account already has a recent watermark', async () => {
+    const host = okHost();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const SECONDS_PER_DAY = 86_400;
+    // ACT-1 already synced yesterday; ACT-2 was just mapped and has never synced.
+    // Without a lookback floor, the shared fetch window would be dominated by
+    // ACT-1's recent watermark and ACT-2 would never get its own history.
+    await writeWatermark(host.api, 'ACT-1', {
+      lastPosted: nowSeconds - SECONDS_PER_DAY,
+      recentIds: [],
+    });
+
+    await runSync(host.api, { ...config, lookbackDays: 5 });
+
+    const requestUrl = new URL(host.requests[0].url);
+    const startDate = Number(requestUrl.searchParams.get('start-date'));
+    const expectedFloor = nowSeconds - 5 * SECONDS_PER_DAY;
+    expect(startDate).toBeLessThanOrEqual(expectedFloor);
+  });
+
+  it('reaches back further than lookbackDays when a watermark is older still', async () => {
+    const host = okHost();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const SECONDS_PER_DAY = 86_400;
+    // An account stuck for 60 days should still get its overlap re-fetch even
+    // though that's further back than the 5-day lookback floor.
+    await writeWatermark(host.api, 'ACT-1', {
+      lastPosted: nowSeconds - 60 * SECONDS_PER_DAY,
+      recentIds: [],
+    });
+
+    await runSync(host.api, { ...config, lookbackDays: 5 });
+
+    const requestUrl = new URL(host.requests[0].url);
+    const startDate = Number(requestUrl.searchParams.get('start-date'));
+    const lookbackFloor = nowSeconds - 5 * SECONDS_PER_DAY;
+    expect(startDate).toBeLessThan(lookbackFloor);
   });
 });

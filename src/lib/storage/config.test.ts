@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { createMockHost } from '../../test/mockHost';
-import { readConfig, writeConfig } from './config';
+import { DEFAULT_LOOKBACK_DAYS, readConfig, writeConfig } from './config';
 
 describe('config', () => {
   it('returns an empty config when nothing is stored', async () => {
     const host = createMockHost();
-    expect(await readConfig(host.api)).toEqual({ baseUrl: null, mappings: [] });
+    expect(await readConfig(host.api)).toEqual({
+      baseUrl: null,
+      mappings: [],
+      lookbackDays: DEFAULT_LOOKBACK_DAYS,
+    });
   });
 
   it('round-trips a config', async () => {
@@ -21,9 +25,23 @@ describe('config', () => {
           orgName: 'Test Bank',
         },
       ],
+      lookbackDays: 60,
     };
     await writeConfig(host.api, config);
     expect(await readConfig(host.api)).toEqual(config);
+  });
+
+  it('defaults lookbackDays for a config written before the field existed', async () => {
+    const host = createMockHost();
+    await host.api.storage.set(
+      'simplefin.config',
+      JSON.stringify({ baseUrl: 'https://bridge.simplefin.org/simplefin', mappings: [] }),
+    );
+    expect(await readConfig(host.api)).toEqual({
+      baseUrl: 'https://bridge.simplefin.org/simplefin',
+      mappings: [],
+      lookbackDays: DEFAULT_LOOKBACK_DAYS,
+    });
   });
 
   it('never stores credentials in the base URL', async () => {
@@ -31,6 +49,7 @@ describe('config', () => {
     await writeConfig(host.api, {
       baseUrl: 'https://bridge.simplefin.org/simplefin',
       mappings: [],
+      lookbackDays: DEFAULT_LOOKBACK_DAYS,
     });
     const stored = [...host.storage.values()].join('');
     expect(stored).not.toContain('@');
@@ -39,7 +58,11 @@ describe('config', () => {
   it('recovers from a corrupt config rather than throwing', async () => {
     const host = createMockHost();
     await host.api.storage.set('simplefin.config', '{not json');
-    expect(await readConfig(host.api)).toEqual({ baseUrl: null, mappings: [] });
+    expect(await readConfig(host.api)).toEqual({
+      baseUrl: null,
+      mappings: [],
+      lookbackDays: DEFAULT_LOOKBACK_DAYS,
+    });
     expect(host.api.logger.error).toHaveBeenCalled();
   });
 });

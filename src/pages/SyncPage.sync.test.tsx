@@ -53,6 +53,7 @@ describe('SyncPage sync trigger', () => {
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
     await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    await userEvent.click(await screen.findByRole('tab', { name: /summary/i }));
 
     const resultsTable = await screen.findByRole('table', { name: /sync results/i });
     const row = within(resultsTable).getByText('Checking').closest('tr');
@@ -98,6 +99,7 @@ describe('SyncPage sync trigger', () => {
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
     await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    await userEvent.click(await screen.findByRole('tab', { name: /summary/i }));
 
     const resultsTable = await screen.findByRole('table', { name: /sync results/i });
     expect(await within(resultsTable).findByText(/was not returned by the bridge/i)).toBeInTheDocument();
@@ -151,6 +153,7 @@ describe('SyncPage sync trigger', () => {
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
     await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    await userEvent.click(await screen.findByRole('tab', { name: /summary/i }));
 
     const resultsTable = await screen.findByRole('table', { name: /sync results/i });
     expect(await within(resultsTable).findByText(/simplefin 150\.00 vs wealthfolio 100/i)).toBeInTheDocument();
@@ -236,6 +239,7 @@ describe('SyncPage sync trigger', () => {
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
     await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    await userEvent.click(await screen.findByRole('tab', { name: /runs/i }));
 
     const historyTable = await screen.findByRole('table', { name: /sync history/i });
     const rows = within(historyTable).getAllByRole('row').slice(1); // drop header row

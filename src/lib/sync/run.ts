@@ -94,13 +94,20 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   const watermarks = await Promise.all(
     config.mappings.map((m) => readWatermark(api, m.sfAccountId)),
   );
-  const oldest = watermarks.reduce(
+  const oldestWatermark = watermarks.reduce(
     (min, wm) => (wm.lastPosted > 0 && wm.lastPosted < min ? wm.lastPosted : min),
     Number.POSITIVE_INFINITY,
   );
-  const startDate = Number.isFinite(oldest)
-    ? Math.max(0, oldest - OVERLAP_DAYS * SECONDS_PER_DAY)
-    : undefined;
+  const watermarkFloor = oldestWatermark - OVERLAP_DAYS * SECONDS_PER_DAY;
+
+  // A mapping added after its sibling accounts already have recent watermarks
+  // would otherwise inherit their (much later) shared start date and never
+  // get its own history. `lookbackDays` guarantees every sync reaches back at
+  // least that far, regardless of what the other accounts' watermarks say.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const lookbackFloor = nowSeconds - config.lookbackDays * SECONDS_PER_DAY;
+
+  const startDate = Math.max(0, Math.min(watermarkFloor, lookbackFloor));
 
   const { accounts, errors } = await fetchAccounts(api.network, config.baseUrl, {
     startDate,

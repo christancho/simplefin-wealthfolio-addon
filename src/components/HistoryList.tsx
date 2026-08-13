@@ -1,5 +1,6 @@
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@wealthfolio/ui';
+import { cn, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@wealthfolio/ui';
 import type { SyncRun } from '../lib/storage/history';
+import { compactCellClassName, compactHeadClassName } from './tableStyle';
 
 export interface HistoryListProps {
   /** Newest-first, as returned by `readHistory` — not re-sorted here. */
@@ -24,9 +25,9 @@ export function HistoryList({ runs }: HistoryListProps) {
     <Table aria-label="Sync history">
       <TableHeader>
         <TableRow>
-          <TableHead>Run</TableHead>
-          <TableHead>Imported</TableHead>
-          <TableHead>Failures</TableHead>
+          <TableHead className={compactHeadClassName}>Run</TableHead>
+          <TableHead className={cn(compactHeadClassName, 'text-right')}>Imported</TableHead>
+          <TableHead className={cn(compactHeadClassName, 'text-right')}>Failures</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -34,9 +35,13 @@ export function HistoryList({ runs }: HistoryListProps) {
           const imported = totalImported(run);
           return (
             <TableRow key={run.startedAt}>
-              <TableCell>{new Date(run.startedAt).toLocaleString()}</TableCell>
-              <TableCell>{imported === null ? '—' : imported}</TableCell>
-              <TableCell>{failureCount(run)}</TableCell>
+              <TableCell className={compactCellClassName}>{new Date(run.startedAt).toLocaleString()}</TableCell>
+              <TableCell className={cn(compactCellClassName, 'text-right tabular-nums')}>
+                {imported === null ? '—' : imported}
+              </TableCell>
+              <TableCell className={cn(compactCellClassName, 'text-right tabular-nums')}>
+                {failureCount(run)}
+              </TableCell>
             </TableRow>
           );
         })}

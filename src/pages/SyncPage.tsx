@@ -1,9 +1,10 @@
 import type { Account, HostAPI } from '@wealthfolio/addon-sdk';
-import { Alert, AlertDescription, Button } from '@wealthfolio/ui';
+import { Alert, AlertDescription, Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@wealthfolio/ui';
 import { useEffect, useState } from 'react';
 import { AccountMapTable } from '../components/AccountMapTable';
 import { BridgeErrorBanner } from '../components/BridgeErrorBanner';
 import { HistoryList } from '../components/HistoryList';
+import { SettingsPanel } from '../components/SettingsPanel';
 import { SetupCard } from '../components/SetupCard';
 import { SyncSummary } from '../components/SyncSummary';
 import { fetchAccounts } from '../lib/simplefin/client';
@@ -85,6 +86,19 @@ export function SyncPage({ api }: SyncPageProps) {
     }
   }
 
+  async function persistLookbackDays(lookbackDays: number) {
+    if (!config) return;
+    const previous = config;
+    const next = { ...config, lookbackDays };
+    setConfig(next);
+    try {
+      await writeConfig(api, next);
+    } catch (err) {
+      setConfig(previous);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   if (!config) {
     return error ? (
       <Alert variant="destructive" role="alert">
@@ -104,31 +118,66 @@ export function SyncPage({ api }: SyncPageProps) {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      <AccountMapTable
-        api={api}
-        sfAccounts={sfAccounts}
-        wfAccounts={wfAccounts}
-        mappings={config.mappings}
-        onChange={persistMappings}
-        onAccountCreated={(account) => setWfAccounts((prev) => [...prev, account])}
-      />
-      <div className="space-y-2">
-        <Button onClick={handleSync} disabled={syncing}>
-          {syncing ? 'Syncing…' : 'Sync now'}
-        </Button>
-        {syncError && (
-          <Alert variant="destructive" role="alert">
-            <AlertDescription>{syncError}</AlertDescription>
-          </Alert>
-        )}
-      </div>
       {lastRun && (
-        <>
-          <BridgeErrorBanner errors={lastRun.bridgeErrors} dashboardUrl={bridgeDashboardUrl(config.baseUrl)} />
-          <SyncSummary run={lastRun} />
-        </>
+        <BridgeErrorBanner errors={lastRun.bridgeErrors} dashboardUrl={bridgeDashboardUrl(config.baseUrl)} />
       )}
-      <HistoryList runs={history} />
+      <Tabs defaultValue="accounts" orientation="vertical" className="flex items-start gap-4">
+        <div className="flex w-40 shrink-0 flex-col gap-2">
+          <TabsList className="flex h-fit flex-col items-stretch gap-1">
+            <TabsTrigger value="accounts" className="justify-start">
+              Accounts
+            </TabsTrigger>
+            <TabsTrigger value="summary" className="justify-start">
+              Summary
+            </TabsTrigger>
+            <TabsTrigger value="runs" className="justify-start">
+              Runs
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="justify-start">
+              Settings
+            </TabsTrigger>
+          </TabsList>
+          <Button onClick={handleSync} disabled={syncing}>
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </Button>
+          {syncError && (
+            <Alert variant="destructive" role="alert">
+              <AlertDescription>{syncError}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <TabsContent value="accounts" className="mt-0">
+            <AccountMapTable
+              api={api}
+              sfAccounts={sfAccounts}
+              wfAccounts={wfAccounts}
+              mappings={config.mappings}
+              onChange={persistMappings}
+              onAccountCreated={(account) => setWfAccounts((prev) => [...prev, account])}
+            />
+          </TabsContent>
+          <TabsContent value="summary" className="mt-0">
+            {lastRun ? (
+              <SyncSummary run={lastRun} />
+            ) : (
+              <p className="text-muted-foreground text-sm">Run a sync to see results.</p>
+            )}
+          </TabsContent>
+          <TabsContent value="runs" className="mt-0">
+            <HistoryList runs={history} />
+          </TabsContent>
+          <TabsContent value="settings" className="mt-0">
+            <SettingsPanel
+              api={api}
+              baseUrl={config.baseUrl}
+              lookbackDays={config.lookbackDays}
+              onLookbackDaysChange={persistLookbackDays}
+              onDisconnected={loadConfig}
+            />
+          </TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }
