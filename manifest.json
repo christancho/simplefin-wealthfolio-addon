@@ -47,6 +47,7 @@
       "functions": [
         { "name": "set", "isDeclared": true, "isDetected": false },
         { "name": "get", "isDeclared": true, "isDetected": false },
+        { "name": "use", "isDeclared": true, "isDetected": false },
         { "name": "delete", "isDeclared": true, "isDetected": false }
       ],
       "purpose": "Store the SimpleFIN access credentials in the system keyring."
