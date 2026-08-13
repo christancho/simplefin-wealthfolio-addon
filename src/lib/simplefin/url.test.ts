@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bridgeDashboardUrl, splitAccessUrl } from './url';
+import { bridgeDashboardUrl, maskBaseUrl, splitAccessUrl } from './url';
 
 describe('splitAccessUrl', () => {
   it('separates credentials from the base URL', () => {
@@ -39,6 +39,14 @@ describe('bridgeDashboardUrl', () => {
   it('reduces to scheme and host', () => {
     expect(bridgeDashboardUrl('https://bridge.simplefin.org/simplefin')).toBe(
       'https://bridge.simplefin.org',
+    );
+  });
+});
+
+describe('maskBaseUrl', () => {
+  it('keeps the origin but hides the path', () => {
+    expect(maskBaseUrl('https://bridge.simplefin.org/simplefin')).toBe(
+      'https://bridge.simplefin.org/••••••',
     );
   });
 });

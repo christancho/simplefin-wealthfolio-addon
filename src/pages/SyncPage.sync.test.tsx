@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { createMockHost } from '../test/mockHost';
 import { appendRun } from '../lib/storage/history';
+import { writeWatermark } from '../lib/storage/watermark';
 import { SyncPage } from './SyncPage';
 
 function seedConfig(host: ReturnType<typeof createMockHost>, mappings: unknown[]) {
@@ -53,6 +54,7 @@ describe('SyncPage sync trigger', () => {
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
     await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    await userEvent.click(await screen.findByRole('tab', { name: /summary/i }));
 
     const resultsTable = await screen.findByRole('table', { name: /sync results/i });
     const row = within(resultsTable).getByText('Checking').closest('tr');
@@ -98,6 +100,7 @@ describe('SyncPage sync trigger', () => {
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
     await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    await userEvent.click(await screen.findByRole('tab', { name: /summary/i }));
 
     const resultsTable = await screen.findByRole('table', { name: /sync results/i });
     expect(await within(resultsTable).findByText(/was not returned by the bridge/i)).toBeInTheDocument();
@@ -130,6 +133,10 @@ describe('SyncPage sync trigger', () => {
   it('renders both figures for an account with a balance mismatch', async () => {
     const host = createMockHost();
     seedConfig(host, [CHECKING_MAPPING]);
+    // Already synced: a first-sync mismatch is now auto-plugged rather than
+    // left as a standing mismatch, so this steady-state UI check needs an
+    // account past its first sync to exercise the mismatch path at all.
+    await writeWatermark(host.api, 'ACT-1', { lastPosted: 1700000000 - 86_400, recentIds: [] });
     host.respond(/\/accounts/, {
       body: JSON.stringify({
         accounts: [
@@ -151,6 +158,7 @@ describe('SyncPage sync trigger', () => {
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
     await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    await userEvent.click(await screen.findByRole('tab', { name: /summary/i }));
 
     const resultsTable = await screen.findByRole('table', { name: /sync results/i });
     expect(await within(resultsTable).findByText(/simplefin 150\.00 vs wealthfolio 100/i)).toBeInTheDocument();
@@ -236,6 +244,7 @@ describe('SyncPage sync trigger', () => {
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
     await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    await userEvent.click(await screen.findByRole('tab', { name: /runs/i }));
 
     const historyTable = await screen.findByRole('table', { name: /sync history/i });
     const rows = within(historyTable).getAllByRole('row').slice(1); // drop header row

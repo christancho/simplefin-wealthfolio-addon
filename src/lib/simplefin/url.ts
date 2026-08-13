@@ -43,3 +43,12 @@ export function bridgeDashboardUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
   return `${url.protocol}//${url.host}`;
 }
+
+/**
+ * Shown in Settings instead of the full base URL — the path segment can still
+ * act as a semi-identifying token even though it carries no credentials.
+ */
+export function maskBaseUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  return `${url.protocol}//${url.host}/••••••`;
+}

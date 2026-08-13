@@ -27,6 +27,11 @@ export function toActivityImport(
     date: isoDate(txn.posted),
     amount: magnitude,
     currency,
+    // Cash activities have no ticker. The addon-sdk types this as optional,
+    // but the host's import endpoint deserializes it as a required field and
+    // rejects the whole batch with an instant 422 if it's absent — confirmed
+    // against a live host (SDK 3.6.2 vs host 3.6.3 version skew).
+    symbol: '',
     comment: txn.payee || txn.description,
     isValid: true,
     isDraft: false,
@@ -54,7 +59,19 @@ export async function syncCashAccount(
   }
 
   const rows = candidates.map((t) => toActivityImport(t, mapping, sfAccount.currency));
-  const checked = await api.activities.checkImport(rows);
+  let checked;
+  try {
+    checked = await api.activities.checkImport(rows);
+  } catch (error) {
+    // A rejection here means the host rejected the request itself (e.g. a
+    // required field the addon-sdk types don't yet reflect) rather than
+    // flagging individual rows — log the payload so the mismatch is visible.
+    api.logger.error(
+      `[simplefin] activities.checkImport rejected ${rows.length} row(s) for ` +
+        `${mapping.sfAccountName}: ${JSON.stringify(rows)}`,
+    );
+    throw error;
+  }
 
   // checkImport annotates each row. Host-detected duplicates are a secondary
   // guard behind our own watermark; we never force-import over them.
@@ -93,7 +110,20 @@ export async function syncCashAccount(
     return { result: { imported: 0, skipped, duplicates }, watermark: advanced };
   }
 
-  const outcome = await api.activities.import(importable);
+  let outcome;
+  try {
+    outcome = await api.activities.import(importable);
+  } catch (error) {
+    // `checkImport` marked these rows valid, so a rejection here means the
+    // host's import-time validation caught something checkImport didn't —
+    // log the exact payload so the failing field is visible next run instead
+    // of just the bare HTTP status text.
+    api.logger.error(
+      `[simplefin] activities.import rejected ${importable.length} row(s) for ` +
+        `${mapping.sfAccountName}: ${JSON.stringify(importable)}`,
+    );
+    throw error;
+  }
 
   return {
     result: { imported: outcome.summary.imported, skipped, duplicates },

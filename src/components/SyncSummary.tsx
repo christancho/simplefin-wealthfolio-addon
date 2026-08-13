@@ -1,5 +1,6 @@
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@wealthfolio/ui';
+import { cn, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@wealthfolio/ui';
 import type { AccountRunResult, SyncRun } from '../lib/storage/history';
+import { compactCellClassName, compactHeadClassName } from './tableStyle';
 
 export interface SyncSummaryProps {
   run: SyncRun;
@@ -21,27 +22,37 @@ export function SyncSummary({ run }: SyncSummaryProps) {
     <Table aria-label="Sync results">
       <TableHeader>
         <TableRow>
-          <TableHead>Account</TableHead>
-          <TableHead>Imported</TableHead>
-          <TableHead>Skipped</TableHead>
-          <TableHead>Duplicates</TableHead>
-          <TableHead>Total</TableHead>
-          <TableHead>Balance</TableHead>
+          <TableHead className={compactHeadClassName}>Account</TableHead>
+          <TableHead className={cn(compactHeadClassName, 'text-right')}>Imported</TableHead>
+          <TableHead className={cn(compactHeadClassName, 'text-right')}>Skipped</TableHead>
+          <TableHead className={cn(compactHeadClassName, 'text-right')}>Duplicates</TableHead>
+          <TableHead className={cn(compactHeadClassName, 'text-right')}>Total</TableHead>
+          <TableHead className={compactHeadClassName}>Balance</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {run.accounts.map((result) => (
           <TableRow key={result.sfAccountId}>
-            <TableCell>{result.sfAccountName}</TableCell>
+            <TableCell className={compactCellClassName}>{result.sfAccountName}</TableCell>
             {result.error ? (
-              <TableCell colSpan={5}>Failed: {result.error}</TableCell>
+              <TableCell className={compactCellClassName} colSpan={5}>
+                Failed: {result.error}
+              </TableCell>
             ) : (
               <>
-                <TableCell>{cell(result.imported)}</TableCell>
-                <TableCell>{cell(result.skipped)}</TableCell>
-                <TableCell>{cell(result.duplicates)}</TableCell>
-                <TableCell>{cell(totalFor(result))}</TableCell>
-                <TableCell>
+                <TableCell className={cn(compactCellClassName, 'text-right tabular-nums')}>
+                  {cell(result.imported)}
+                </TableCell>
+                <TableCell className={cn(compactCellClassName, 'text-right tabular-nums')}>
+                  {cell(result.skipped)}
+                </TableCell>
+                <TableCell className={cn(compactCellClassName, 'text-right tabular-nums')}>
+                  {cell(result.duplicates)}
+                </TableCell>
+                <TableCell className={cn(compactCellClassName, 'text-right tabular-nums')}>
+                  {cell(totalFor(result))}
+                </TableCell>
+                <TableCell className={compactCellClassName}>
                   {result.balanceMismatch
                     ? `SimpleFIN ${result.balanceMismatch.simplefin} vs Wealthfolio ${result.balanceMismatch.wealthfolio}`
                     : '—'}

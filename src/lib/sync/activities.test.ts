@@ -54,6 +54,14 @@ describe('toActivityImport', () => {
     const activity = toActivityImport(txn() as never, mapping, 'USD');
     expect(activity.date).toBe('2025-08-06');
   });
+
+  it('sets symbol to an empty string, since the host rejects the whole batch if it is absent', () => {
+    // Regression test: the host's import endpoint deserializes `symbol` as a
+    // required field even though the addon-sdk types call it optional —
+    // omitting it causes checkImport to fail instantly for every row.
+    const activity = toActivityImport(txn() as never, mapping, 'USD');
+    expect(activity.symbol).toBe('');
+  });
 });
 
 describe('syncCashAccount', () => {
@@ -193,5 +201,38 @@ describe('syncCashAccount', () => {
     await expect(
       syncCashAccount(host.api, mapping, account([txn()]) as never, before),
     ).rejects.toThrow(/host exploded/);
+  });
+
+  it('logs the rejected payload when checkImport itself throws, so the failing row is visible', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async () => {
+      throw new Error('Unprocessable Entity');
+    });
+
+    await expect(
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark()),
+    ).rejects.toThrow(/Unprocessable Entity/);
+
+    expect(host.api.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining(mapping.sfAccountName),
+    );
+    expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('"symbol":""'));
+  });
+
+  it('logs the rejected payload when the host import throws, so the failing row is visible', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a) => a);
+    host.api.activities.import = vi.fn(async () => {
+      throw new Error('Unprocessable Entity');
+    });
+
+    await expect(
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark()),
+    ).rejects.toThrow(/Unprocessable Entity/);
+
+    expect(host.api.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining(mapping.sfAccountName),
+    );
+    expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('"amount":"42.10"'));
   });
 });

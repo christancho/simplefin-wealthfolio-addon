@@ -6,6 +6,7 @@ import { appendRun, type AccountRunResult, type SyncRun } from '../storage/histo
 import { readWatermark, writeWatermark } from '../storage/watermark';
 import { syncCashAccount } from './activities';
 import { compareBalances } from './balance';
+import { buildOpeningBalanceActivity } from './openingBalance';
 import { syncHoldingsAccount } from './snapshots';
 
 /**
@@ -16,8 +17,73 @@ import { syncHoldingsAccount } from './snapshots';
 const OVERLAP_DAYS = 7;
 const SECONDS_PER_DAY = 86_400;
 
+/**
+ * Full-history pull for a CASH mapping's first-ever sync. The shared batch
+ * fetch in runSync is deliberately windowed (lookbackDays), so a fresh
+ * mapping never gets more than one statement cycle from it — this is the
+ * separate, per-account counterpart that asks for everything the Bridge is
+ * willing to give, so the opening-balance plug below has as little gap as
+ * possible left to cover. An explicit epoch-0 startDate is used rather than
+ * omitting the param: the SimpleFIN spec treats an omitted start-date as
+ * bridge-implementation-defined, not a documented "give me everything".
+ */
+async function fetchFullHistory(
+  api: HostAPI,
+  baseUrl: string,
+  sfAccountId: string,
+): Promise<SfAccount | undefined> {
+  const { accounts } = await fetchAccounts(api.network, baseUrl, {
+    accountIds: [sfAccountId],
+    startDate: 0,
+  });
+  return accounts.find((a) => a.id === sfAccountId);
+}
+
+/**
+ * Plugs the gap between SimpleFIN's current balance and whatever the
+ * full-history pull actually landed in Wealthfolio, as one synthetic
+ * TRANSFER_IN/OUT activity. The gap is read from Wealthfolio's real balance
+ * after the push rather than tracked through the batch import's return value
+ * — `ImportActivitiesResult.summary` only carries counts, not which rows
+ * landed or their amounts, and diffing the account's actual balance sidesteps
+ * needing that: a retry after a partial failure just recomputes against
+ * whatever is really there, so a gap already closed comes out as zero and is
+ * skipped rather than double-plugged.
+ */
+async function pushOpeningBalance(
+  api: HostAPI,
+  mapping: AccountMapping,
+  sfAccount: SfAccount,
+): Promise<number> {
+  await api.portfolio.recalculate();
+  const wfAccount = (await api.accounts.getAll()).find((a) => a.id === mapping.wfAccountId);
+  if (!wfAccount) return 0;
+
+  const posted = sfAccount.transactions.filter((t) => !t.pending);
+  const earliestPosted = posted.length > 0 ? Math.min(...posted.map((t) => t.posted)) : null;
+
+  const plug = buildOpeningBalanceActivity(
+    {
+      sfBalance: sfAccount.balance,
+      wfBalance: String(wfAccount.balance),
+      earliestPosted,
+      balanceDate: sfAccount.balanceDate,
+    },
+    mapping,
+    sfAccount.currency,
+  );
+  if (!plug) return 0;
+
+  const [checked] = await api.activities.checkImport([plug]);
+  if (!checked.isValid || checked.duplicateOfId) return 0;
+
+  await api.activities.import([checked]);
+  return 1;
+}
+
 async function syncOne(
   api: HostAPI,
+  baseUrl: string,
   mapping: AccountMapping,
   sfAccount: SfAccount | undefined,
   wfBalances: Map<string, string>,
@@ -60,18 +126,31 @@ async function syncOne(
     }
 
     const watermark = await readWatermark(api, mapping.sfAccountId);
-    const { result, watermark: next } = await syncCashAccount(api, mapping, sfAccount, watermark);
+    const isFirstSync = watermark.lastPosted === 0;
+
+    // A fresh mapping never has enough in the shared, lookbackDays-windowed
+    // batch fetch to seed an accurate opening balance — pull this one
+    // account's full history separately before pushing anything.
+    const syncSfAccount = isFirstSync
+      ? ((await fetchFullHistory(api, baseUrl, mapping.sfAccountId)) ?? sfAccount)
+      : sfAccount;
+
+    const { result, watermark: next } = await syncCashAccount(api, mapping, syncSfAccount, watermark);
     await writeWatermark(api, mapping.sfAccountId, next);
+
+    const plugImported = isFirstSync ? await pushOpeningBalance(api, mapping, syncSfAccount) : 0;
 
     return {
       ...base,
-      imported: result.imported,
+      imported: result.imported + plugImported,
       skipped: result.skipped,
       duplicates: result.duplicates,
-      balanceMismatch: compareBalances(
-        sfAccount.balance,
-        wfBalances.get(mapping.wfAccountId) ?? null,
-      ),
+      // A first-sync account's balance was just brought into agreement by the
+      // plug above (or never disagreed); comparing against the pre-run
+      // snapshot in wfBalances would flag a stale, misleading mismatch.
+      balanceMismatch: isFirstSync
+        ? null
+        : compareBalances(sfAccount.balance, wfBalances.get(mapping.wfAccountId) ?? null),
     };
   } catch (error) {
     // Per-institution isolation is a hard invariant: record and continue.
@@ -94,13 +173,20 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   const watermarks = await Promise.all(
     config.mappings.map((m) => readWatermark(api, m.sfAccountId)),
   );
-  const oldest = watermarks.reduce(
+  const oldestWatermark = watermarks.reduce(
     (min, wm) => (wm.lastPosted > 0 && wm.lastPosted < min ? wm.lastPosted : min),
     Number.POSITIVE_INFINITY,
   );
-  const startDate = Number.isFinite(oldest)
-    ? Math.max(0, oldest - OVERLAP_DAYS * SECONDS_PER_DAY)
-    : undefined;
+  const watermarkFloor = oldestWatermark - OVERLAP_DAYS * SECONDS_PER_DAY;
+
+  // A mapping added after its sibling accounts already have recent watermarks
+  // would otherwise inherit their (much later) shared start date and never
+  // get its own history. `lookbackDays` guarantees every sync reaches back at
+  // least that far, regardless of what the other accounts' watermarks say.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const lookbackFloor = nowSeconds - config.lookbackDays * SECONDS_PER_DAY;
+
+  const startDate = Math.max(0, Math.min(watermarkFloor, lookbackFloor));
 
   const { accounts, errors } = await fetchAccounts(api.network, config.baseUrl, {
     startDate,
@@ -126,7 +212,9 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   // run keeps one slow institution from being blamed for another's timeout.
   const results: AccountRunResult[] = [];
   for (const mapping of config.mappings) {
-    results.push(await syncOne(api, mapping, bySfId.get(mapping.sfAccountId), wfBalances));
+    results.push(
+      await syncOne(api, config.baseUrl, mapping, bySfId.get(mapping.sfAccountId), wfBalances),
+    );
   }
 
   const run: SyncRun = {
