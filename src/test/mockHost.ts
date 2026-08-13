@@ -39,6 +39,7 @@ export function createMockHost(): MockHost {
     accounts: { getAll: vi.fn(async () => []), create: vi.fn() },
     activities: { checkImport: vi.fn(), import: vi.fn() },
     snapshots: { checkImport: vi.fn(), importSnapshots: vi.fn() },
+    portfolio: { recalculate: vi.fn(async () => {}) },
     logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), trace: vi.fn() },
   } as unknown as HostAPI;
 

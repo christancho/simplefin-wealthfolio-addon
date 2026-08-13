@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { createMockHost } from '../test/mockHost';
 import { appendRun } from '../lib/storage/history';
+import { writeWatermark } from '../lib/storage/watermark';
 import { SyncPage } from './SyncPage';
 
 function seedConfig(host: ReturnType<typeof createMockHost>, mappings: unknown[]) {
@@ -132,6 +133,10 @@ describe('SyncPage sync trigger', () => {
   it('renders both figures for an account with a balance mismatch', async () => {
     const host = createMockHost();
     seedConfig(host, [CHECKING_MAPPING]);
+    // Already synced: a first-sync mismatch is now auto-plugged rather than
+    // left as a standing mismatch, so this steady-state UI check needs an
+    // account past its first sync to exercise the mismatch path at all.
+    await writeWatermark(host.api, 'ACT-1', { lastPosted: 1700000000 - 86_400, recentIds: [] });
     host.respond(/\/accounts/, {
       body: JSON.stringify({
         accounts: [

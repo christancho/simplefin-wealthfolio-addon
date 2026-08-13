@@ -189,3 +189,118 @@ describe('runSync', () => {
     expect(startDate).toBeLessThan(lookbackFloor);
   });
 });
+
+describe('runSync opening-balance backfill', () => {
+  const backfillConfig: SyncConfig = {
+    baseUrl: 'https://bridge.simplefin.org/simplefin',
+    mappings: [
+      {
+        sfAccountId: 'ACT-1',
+        wfAccountId: 'WF-1',
+        mode: 'CASH',
+        sfAccountName: 'Checking',
+        orgName: 'Bank A',
+      },
+    ],
+    lookbackDays: 30,
+  };
+
+  /** A Wealthfolio account whose balance actually moves as activities are pushed. */
+  function backfillHost(sfBalance: string, transactions: unknown[]) {
+    const host = createMockHost();
+    host.respond(/\/accounts/, {
+      body: JSON.stringify({
+        errors: [],
+        accounts: [
+          {
+            org: { name: 'Bank A' },
+            id: 'ACT-1',
+            name: 'Checking',
+            currency: 'USD',
+            balance: sfBalance,
+            'balance-date': 1754524800,
+            transactions,
+            holdings: [],
+          },
+        ],
+      }),
+    });
+
+    let wfBalance = 0;
+    const pushed: ActivityImport[] = [];
+
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) =>
+      a.map((row) => ({ ...row, isValid: true })),
+    );
+    host.api.activities.import = vi.fn(async (rows: ActivityImport[]) => {
+      for (const row of rows) {
+        pushed.push(row);
+        const amount = Number(row.amount);
+        wfBalance += row.activityType === 'WITHDRAWAL' || row.activityType === 'TRANSFER_OUT' ? -amount : amount;
+      }
+      return {
+        activities: [],
+        importRunId: 'R',
+        summary: { total: rows.length, imported: rows.length, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+      };
+    });
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', balance: wfBalance } as never]);
+
+    return { host, pushed };
+  }
+
+  it('pushes a TRANSFER_IN opening-balance entry that closes the gap on first sync', async () => {
+    const { host, pushed } = backfillHost('100.00', [
+      { id: 'T1', posted: 1754438400, amount: '-10.00', description: 'X' },
+    ]);
+
+    const run = await runSync(host.api, backfillConfig);
+
+    expect(pushed).toHaveLength(2);
+    expect(pushed[0].activityType).toBe('WITHDRAWAL');
+    expect(pushed[1].activityType).toBe('TRANSFER_IN');
+    expect(pushed[1].amount).toBe('110.00');
+    expect(run.accounts[0].imported).toBe(2);
+  });
+
+  it('fetches full unbounded history scoped to the account on first sync', async () => {
+    const { host } = backfillHost('100.00', []);
+
+    await runSync(host.api, backfillConfig);
+
+    const backfillRequest = host.requests.find((r) => new URL(r.url).searchParams.get('start-date') === '0');
+    expect(backfillRequest).toBeDefined();
+    expect(new URL(backfillRequest!.url).searchParams.getAll('account')).toEqual(['ACT-1']);
+  });
+
+  it('skips the opening-balance entry when nothing needs to be plugged', async () => {
+    const { host, pushed } = backfillHost('10.00', [
+      { id: 'T1', posted: 1754438400, amount: '10.00', description: 'X' },
+    ]);
+
+    await runSync(host.api, backfillConfig);
+
+    expect(pushed).toHaveLength(1);
+    expect(pushed[0].activityType).toBe('DEPOSIT');
+  });
+
+  it('does not run the backfill fetch for a mapping that has already synced', async () => {
+    const { host } = backfillHost('100.00', []);
+    await writeWatermark(host.api, 'ACT-1', { lastPosted: 1754438400, recentIds: [] });
+
+    await runSync(host.api, backfillConfig);
+
+    expect(host.requests).toHaveLength(1);
+  });
+
+  it('does not run the backfill path for a HOLDINGS mapping', async () => {
+    const { host } = backfillHost('100.00', []);
+
+    await runSync(host.api, {
+      ...backfillConfig,
+      mappings: [{ ...backfillConfig.mappings[0], mode: 'HOLDINGS' }],
+    });
+
+    expect(host.requests).toHaveLength(1);
+  });
+});
