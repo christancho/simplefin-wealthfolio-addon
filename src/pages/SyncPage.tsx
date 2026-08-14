@@ -11,7 +11,7 @@ import { SyncSummary } from '../components/SyncSummary';
 import { fetchAccounts } from '../lib/simplefin/client';
 import type { SfAccount } from '../lib/simplefin/parse';
 import { bridgeDashboardUrl } from '../lib/simplefin/url';
-import { readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
+import { cashAccountIdsFrom, readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
 import { readHistory, type SyncRun } from '../lib/storage/history';
 import { runSync } from '../lib/sync/run';
 
@@ -188,7 +188,10 @@ export function SyncPage({ api }: SyncPageProps) {
             <StagedTransactionsList
               key={lastRun?.finishedAt ?? 'initial'}
               api={api}
-              cashAccountIds={config.mappings.filter((m) => m.mode === 'CASH').map((m) => m.wfAccountId)}
+              cashAccountIds={cashAccountIdsFrom(
+                config.mappings,
+                (id) => wfAccounts.find((a) => a.id === id)?.accountType,
+              )}
             />
           </TabsContent>
           <TabsContent value="settings" className="mt-0">

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createMockHost } from '../../test/mockHost';
-import { DEFAULT_LOOKBACK_DAYS, DEFAULT_PAYMENT_KEYWORDS, readConfig, writeConfig } from './config';
+import {
+  DEFAULT_LOOKBACK_DAYS,
+  DEFAULT_PAYMENT_KEYWORDS,
+  cashAccountIdsFrom,
+  readConfig,
+  writeConfig,
+  type AccountMapping,
+} from './config';
 
 describe('config', () => {
   it('returns an empty config when nothing is stored', async () => {
@@ -69,5 +76,32 @@ describe('config', () => {
       paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
     });
     expect(host.api.logger.error).toHaveBeenCalled();
+  });
+});
+
+describe('cashAccountIdsFrom', () => {
+  const mapping = (over: Partial<AccountMapping> = {}): AccountMapping => ({
+    sfAccountId: 'ACT-1',
+    wfAccountId: 'WF-1',
+    mode: 'CASH',
+    sfAccountName: 'Account',
+    orgName: 'Bank',
+    ...over,
+  });
+
+  it('excludes a CREDIT_CARD account even when its mode is CASH', () => {
+    const mappings = [
+      mapping({ wfAccountId: 'WF-CARD' }),
+      mapping({ wfAccountId: 'WF-CASH' }),
+    ];
+    const accountTypeOf = (id: string) => (id === 'WF-CARD' ? ('CREDIT_CARD' as const) : ('CASH' as const));
+
+    expect(cashAccountIdsFrom(mappings, accountTypeOf)).toEqual(['WF-CASH']);
+  });
+
+  it('excludes a HOLDINGS-mode mapping regardless of account type', () => {
+    const mappings = [mapping({ wfAccountId: 'WF-BROKERAGE', mode: 'HOLDINGS' })];
+
+    expect(cashAccountIdsFrom(mappings, () => 'CASH' as const)).toEqual([]);
   });
 });

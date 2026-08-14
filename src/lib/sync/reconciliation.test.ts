@@ -155,6 +155,47 @@ describe('runReconciliation', () => {
     expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('TXN-BAD'));
   });
 
+  it('re-stages the candidate when saveMany resolves with per-item errors instead of throwing', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
+      return { data: [withdrawalActivity()], meta: { totalRowCount: 1 } };
+    }) as never;
+    host.api.activities.saveMany = vi.fn(async () => ({
+      created: [],
+      updated: [],
+      deleted: [],
+      createdMappings: [],
+      errors: [{ id: 'CARD-ACT-1', action: 'update', message: 'row locked' }],
+    })) as never;
+
+    const { candidates, summary } = await runReconciliation(host.api, [candidate()], ['WF-CASH'], NOW);
+
+    expect(summary.resolved).toBe(0);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].sfTransactionId).toBe('TXN-1');
+    expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('TXN-1'));
+  });
+
+  it('fetches the withdrawal search once per run rather than once per candidate', async () => {
+    const host = createMockHost();
+    let withdrawalSearchCalls = 0;
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
+      withdrawalSearchCalls += 1;
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const candidates = [
+      candidate({ sfTransactionId: 'TXN-1' }),
+      candidate({ sfTransactionId: 'TXN-2' }),
+      candidate({ sfTransactionId: 'TXN-3' }),
+    ];
+    await runReconciliation(host.api, candidates, ['WF-CASH'], NOW);
+
+    expect(withdrawalSearchCalls).toBe(1);
+  });
+
   it('paginates search() from page 0 until totalRowCount is covered', async () => {
     const host = createMockHost();
     const manyWithdrawals = Array.from({ length: 3 }, (_, i) => withdrawalActivity({ id: `PAGE-${i}` }));

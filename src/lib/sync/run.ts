@@ -1,7 +1,7 @@
 import type { AccountType, HostAPI } from '@wealthfolio/addon-sdk';
 import { fetchAccounts } from '../simplefin/client';
 import type { SfAccount } from '../simplefin/parse';
-import type { AccountMapping, SyncConfig } from '../storage/config';
+import { cashAccountIdsFrom, type AccountMapping, type SyncConfig } from '../storage/config';
 import { appendRun, type AccountRunResult, type SyncRun } from '../storage/history';
 import { readStaging, writeStaging, type StagedCandidate } from '../storage/staging';
 import { readWatermark, writeWatermark } from '../storage/watermark';
@@ -248,7 +248,7 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
     detectedCandidates.push(...candidates);
   }
 
-  const cashAccountIds = config.mappings.filter((m) => m.mode === 'CASH').map((m) => m.wfAccountId);
+  const cashAccountIds = cashAccountIdsFrom(config.mappings, (id) => wfAccountTypes.get(id));
   try {
     const existingStaging = await readStaging(api);
     const { candidates: remainingCandidates } = await runReconciliation(

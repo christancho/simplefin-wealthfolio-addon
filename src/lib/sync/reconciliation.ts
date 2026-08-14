@@ -74,17 +74,17 @@ export async function findCardActivity(api: HostAPI, candidate: StagedCandidate)
   );
 }
 
-async function findWithdrawalMatches(
-  api: HostAPI,
-  cashAccountIds: string[],
-  candidate: StagedCandidate,
-): Promise<ActivityDetails[]> {
-  if (cashAccountIds.length === 0) return [];
-
+/**
+ * Filters an already-fetched withdrawal pool down to this candidate's
+ * matches (same amount, posted within the match window). Pure and
+ * synchronous on purpose — the withdrawal pool is identical for every
+ * candidate in a run, so callers fetch it once via `searchAllByType` and
+ * reuse it across candidates rather than re-fetching per candidate.
+ */
+function withdrawalMatches(withdrawals: ActivityDetails[], candidate: StagedCandidate): ActivityDetails[] {
   const cardPostedSeconds = Date.parse(candidate.postedDate) / 1000;
   const windowStartSeconds = cardPostedSeconds - MATCH_WINDOW_DAYS * SECONDS_PER_DAY;
 
-  const withdrawals = await searchAllByType(api, cashAccountIds, 'WITHDRAWAL');
   return withdrawals.filter((w) => {
     const postedSeconds = Date.parse(toIsoDateOnly(w.date)) / 1000;
     return (
@@ -130,11 +130,28 @@ function toUpdate(row: ActivityDetails, activityType: string): ActivityUpdate {
  * reconciliation attempt could never re-find the (now non-CREDIT) card
  * activity — leaving the pair permanently half-reclassified. One request,
  * one failure path avoids that split-write state.
+ *
+ * `saveMany` can also resolve successfully while still reporting a per-item
+ * failure in `result.errors` rather than throwing — that's checked here and
+ * turned into a thrown error so the caller's existing catch/retry path (in
+ * `runReconciliation`) treats it the same as a hard failure, instead of
+ * counting the candidate resolved while one or both legs never actually
+ * changed.
  */
-async function reclassifyPair(api: HostAPI, cardRow: ActivityDetails, withdrawalRow: ActivityDetails): Promise<void> {
-  await api.activities.saveMany({
+async function reclassifyPair(
+  api: HostAPI,
+  cardRow: ActivityDetails,
+  withdrawalRow: ActivityDetails,
+  sfTransactionId: string,
+): Promise<void> {
+  const result = await api.activities.saveMany({
     updates: [toUpdate(cardRow, 'TRANSFER_IN'), toUpdate(withdrawalRow, 'TRANSFER_OUT')],
   });
+  if (result.errors.length > 0) {
+    throw new Error(
+      `saveMany reported per-item errors for candidate ${sfTransactionId}: ${JSON.stringify(result.errors)}`,
+    );
+  }
 }
 
 export interface ReconciliationSummary {
@@ -158,13 +175,22 @@ export async function runReconciliation(
   let resolved = 0;
   let expired = 0;
 
+  const active: StagedCandidate[] = [];
   for (const candidate of candidates) {
     const postedSeconds = Date.parse(candidate.postedDate) / 1000;
     if (nowSeconds - postedSeconds > EXPIRY_DAYS * SECONDS_PER_DAY) {
       expired += 1;
       continue;
     }
+    active.push(candidate);
+  }
 
+  // The withdrawal pool searched is identical for every candidate in this
+  // run (same cashAccountIds) — fetch it once rather than once per
+  // candidate, skipping the call entirely when nothing is left to check.
+  const withdrawals = active.length > 0 ? await searchAllByType(api, cashAccountIds, 'WITHDRAWAL') : [];
+
+  for (const candidate of active) {
     try {
       const cardRow = await findCardActivity(api, candidate);
       if (!cardRow) {
@@ -174,23 +200,23 @@ export async function runReconciliation(
         continue;
       }
 
-      const withdrawals = await findWithdrawalMatches(api, cashAccountIds, candidate);
+      const matches = withdrawalMatches(withdrawals, candidate);
 
-      if (withdrawals.length === 0) {
+      if (matches.length === 0) {
         remaining.push({ ...candidate, cardActivityId: cardRow.id, status: 'pending', candidateWithdrawalIds: [] });
         continue;
       }
-      if (withdrawals.length > 1) {
+      if (matches.length > 1) {
         remaining.push({
           ...candidate,
           cardActivityId: cardRow.id,
           status: 'ambiguous',
-          candidateWithdrawalIds: withdrawals.map((w) => w.id),
+          candidateWithdrawalIds: matches.map((w) => w.id),
         });
         continue;
       }
 
-      await reclassifyPair(api, cardRow, withdrawals[0]);
+      await reclassifyPair(api, cardRow, matches[0], candidate.sfTransactionId);
       resolved += 1;
     } catch (error) {
       api.logger.error(
@@ -221,5 +247,5 @@ export async function resolveAmbiguous(
     throw new Error(`Could not find withdrawal ${chosenWithdrawalId}`);
   }
 
-  await reclassifyPair(api, cardRow, withdrawalRow);
+  await reclassifyPair(api, cardRow, withdrawalRow, candidate.sfTransactionId);
 }

@@ -195,7 +195,17 @@ describe('runSync', () => {
     expect(startDate).toBeLessThan(lookbackFloor);
   });
 
-  it('detects a credit-card payment candidate during the account loop', async () => {
+  it('never treats a mapped credit-card account as a cash account for withdrawal matching', async () => {
+    // Regression for the final whole-branch review finding: `mode: 'CASH'`
+    // is the sync mode, not the account type — `defaultModeFor` assigns it
+    // to any account with no holdings, which is exactly what a mapped card
+    // gets. If cashAccountIds ever includes the card's own account again,
+    // its own same-amount purchase (also a WITHDRAWAL) becomes the sole
+    // match and this candidate would wrongly auto-resolve instead of
+    // staying pending.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1754438400 * 1000 + 2 * 86_400_000));
+
     const host = createMockHost();
     host.respond(/\/accounts/, {
       body: JSON.stringify({
@@ -207,7 +217,7 @@ describe('runSync', () => {
             name: 'Visa',
             currency: 'USD',
             balance: '0.00',
-            'balance-date': 1754524800,
+            'balance-date': 1754438400,
             transactions: [
               { id: 'TXN-PAY', posted: 1754438400, amount: '50.00', description: 'Online Payment Thank You' },
             ],
@@ -222,19 +232,53 @@ describe('runSync', () => {
       importRunId: 'R',
       summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
     }));
-    host.api.activities.search = vi.fn(async () => ({ data: [], meta: { totalRowCount: 0 } }));
-    host.api.accounts.getAll = vi.fn(async () => [{ id: 'ACT-CARD', accountType: 'CREDIT_CARD', balance: 0 }] as never);
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { accountIds: string[]; activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') {
+        return {
+          data: [
+            {
+              id: 'CARD-ACT-1',
+              accountId: 'ACT-CARD',
+              activityType: 'CREDIT',
+              date: '2025-08-06T00:00:00+00:00',
+              amount: '50',
+              currency: 'USD',
+              comment: 'Online Payment Thank You',
+            },
+          ],
+          meta: { totalRowCount: 1 },
+        };
+      }
+      // The only same-amount, in-window WITHDRAWAL lives on the card's own
+      // account (its own purchase) — a real cash account never had one.
+      if (filters.accountIds.includes('ACT-CARD')) {
+        return {
+          data: [
+            {
+              id: 'CARD-PURCHASE-1',
+              accountId: 'ACT-CARD',
+              activityType: 'WITHDRAWAL',
+              date: '2025-08-05T00:00:00+00:00',
+              amount: '50',
+              currency: 'USD',
+              comment: 'Groceries',
+            },
+          ],
+          meta: { totalRowCount: 1 },
+        };
+      }
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+    host.api.accounts.getAll = vi.fn(async () => [
+      { id: 'ACT-CARD', accountType: 'CREDIT_CARD', balance: 0 },
+      { id: 'WF-CASH', accountType: 'CASH', balance: 0 },
+    ] as never);
 
     const cardConfig = {
       baseUrl: 'https://bridge.simplefin.org/simplefin',
       mappings: [
-        {
-          sfAccountId: 'ACT-CARD',
-          wfAccountId: 'ACT-CARD',
-          mode: 'CASH' as const,
-          sfAccountName: 'Visa',
-          orgName: 'Card Co',
-        },
+        { sfAccountId: 'ACT-CARD', wfAccountId: 'ACT-CARD', mode: 'CASH' as const, sfAccountName: 'Visa', orgName: 'Card Co' },
+        { sfAccountId: 'ACT-CASH', wfAccountId: 'WF-CASH', mode: 'CASH' as const, sfAccountName: 'Checking', orgName: 'Bank A' },
       ],
       lookbackDays: 30,
       paymentKeywords: ['PAYMENT'],
@@ -242,11 +286,16 @@ describe('runSync', () => {
 
     await runSync(host.api, cardConfig);
 
-    // The reconciliation pass (wired in Task 6) will read this back; for now
-    // just confirm detection ran without needing a search()/update() call —
-    // 0 withdrawal candidates from the empty mock search means nothing to
-    // reconcile against yet, and no error was thrown.
-    expect(host.api.activities.import).toHaveBeenCalled();
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
+    const searchCalls = (host.api.activities.search as ReturnType<typeof vi.fn>).mock.calls as Array<
+      [number, number, { activityTypes: string; accountIds: string[] }]
+    >;
+    const withdrawalCalls = searchCalls.filter(([, , filters]) => filters.activityTypes === 'WITHDRAWAL');
+    expect(withdrawalCalls.every(([, , filters]) => !filters.accountIds.includes('ACT-CARD'))).toBe(true);
+
+    const staged = await readStaging(host.api);
+    expect(staged).toHaveLength(1);
+    expect(staged[0].status).toBe('pending');
   });
 
   it('persists a detected candidate and reconciles it against an existing withdrawal in the same run', async () => {

@@ -1,4 +1,4 @@
-import type { HostAPI } from '@wealthfolio/addon-sdk';
+import type { AccountType, HostAPI } from '@wealthfolio/addon-sdk';
 import { storageKey } from './keys';
 
 /** How a mapped SimpleFIN account is pushed into Wealthfolio. */
@@ -59,4 +59,20 @@ export async function readConfig(api: HostAPI): Promise<SyncConfig> {
 
 export async function writeConfig(api: HostAPI, config: SyncConfig): Promise<void> {
   await api.storage.set(CONFIG_KEY, JSON.stringify(config));
+}
+
+/**
+ * `mode` is the sync mode ('CASH' | 'HOLDINGS'), not the Wealthfolio account
+ * type — `defaultModeFor` assigns 'CASH' to any account with no holdings,
+ * which is exactly what a mapped credit-card account gets. Reconciliation's
+ * withdrawal search must never include a card's own account (every purchase
+ * on it is a WITHDRAWAL), so this also excludes CREDIT_CARD accounts.
+ */
+export function cashAccountIdsFrom(
+  mappings: AccountMapping[],
+  accountTypeOf: (wfAccountId: string) => AccountType | undefined,
+): string[] {
+  return mappings
+    .filter((m) => m.mode === 'CASH' && accountTypeOf(m.wfAccountId) !== 'CREDIT_CARD')
+    .map((m) => m.wfAccountId);
 }
