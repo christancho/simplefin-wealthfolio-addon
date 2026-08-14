@@ -268,4 +268,83 @@ describe('SyncPage sync trigger', () => {
     expect(await screen.findByText(/history storage unavailable/i)).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /sync now/i })).toBeEnabled();
   });
+
+  it('renders staged candidates under the Staged tab', async () => {
+    const host = createMockHost();
+    seedConfig(host, [CHECKING_MAPPING]);
+    host.respond(/\/accounts/, {
+      body: JSON.stringify({
+        accounts: [
+          { id: 'ACT-1', name: 'Checking', currency: 'USD', balance: '100.00', 'balance-date': 1700000000, org: { name: 'Bank A' }, transactions: [] },
+        ],
+        errors: [],
+      }),
+    });
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', name: 'My Checking', balance: 100 }] as never);
+    await host.api.storage.set(
+      'simplefin.staging',
+      JSON.stringify([
+        {
+          sfTransactionId: 'TXN-1',
+          cardAccountId: 'WF-CARD',
+          cardActivityId: null,
+          amount: '50.00',
+          postedDate: '2026-08-01',
+          comment: 'Online Payment Thank You',
+          status: 'pending',
+          candidateWithdrawalIds: [],
+        },
+      ]),
+    );
+
+    render(<SyncPage api={host.api} />);
+    await screen.findByText('Checking');
+    await userEvent.click(await screen.findByRole('tab', { name: /staged/i }));
+
+    expect(await screen.findByText('Online Payment Thank You')).toBeInTheDocument();
+  });
+
+  it('refreshes the Staged tab after a completed sync, since it stays mounted across tab switches', async () => {
+    const host = createMockHost();
+    seedConfig(host, [CHECKING_MAPPING]);
+    host.respond(/\/accounts/, {
+      body: JSON.stringify({
+        accounts: [
+          { id: 'ACT-1', name: 'Checking', currency: 'USD', balance: '100.00', 'balance-date': 1700000000, org: { name: 'Bank A' }, transactions: [] },
+        ],
+        errors: [],
+      }),
+    });
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', name: 'My Checking', balance: 100 }] as never);
+
+    render(<SyncPage api={host.api} />);
+    await screen.findByText('Checking');
+    await userEvent.click(await screen.findByRole('tab', { name: /staged/i }));
+    expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
+
+    // A sync runs and, elsewhere, resolves a candidate into staging — the
+    // tab is already mounted (and was already visited), so only a remount
+    // triggered by the completed run's changed `finishedAt` will pick it up.
+    // postedDate is "today" (not a fixed literal) because handleSync's
+    // runSync() runs reconciliation against the real wall clock, which
+    // expires (and drops) any candidate posted more than EXPIRY_DAYS ago.
+    await host.api.storage.set(
+      'simplefin.staging',
+      JSON.stringify([
+        {
+          sfTransactionId: 'TXN-2',
+          cardAccountId: 'WF-CARD',
+          cardActivityId: null,
+          amount: '25.00',
+          postedDate: new Date().toISOString().slice(0, 10),
+          comment: 'Autopay',
+          status: 'pending',
+          candidateWithdrawalIds: [],
+        },
+      ]),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+
+    expect(await screen.findByText('Autopay')).toBeInTheDocument();
+  });
 });

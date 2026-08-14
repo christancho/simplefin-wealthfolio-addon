@@ -6,6 +6,7 @@ import { BridgeErrorBanner } from '../components/BridgeErrorBanner';
 import { HistoryList } from '../components/HistoryList';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { SetupCard } from '../components/SetupCard';
+import { StagedTransactionsList } from '../components/StagedTransactionsList';
 import { SyncSummary } from '../components/SyncSummary';
 import { fetchAccounts } from '../lib/simplefin/client';
 import type { SfAccount } from '../lib/simplefin/parse';
@@ -133,6 +134,9 @@ export function SyncPage({ api }: SyncPageProps) {
             <TabsTrigger value="runs" className="justify-start">
               Runs
             </TabsTrigger>
+            <TabsTrigger value="staged" className="justify-start">
+              Staged
+            </TabsTrigger>
             <TabsTrigger value="settings" className="justify-start">
               Settings
             </TabsTrigger>
@@ -166,6 +170,13 @@ export function SyncPage({ api }: SyncPageProps) {
           </TabsContent>
           <TabsContent value="runs" className="mt-0">
             <HistoryList runs={history} />
+          </TabsContent>
+          <TabsContent value="staged" className="mt-0">
+            <StagedTransactionsList
+              key={lastRun?.finishedAt ?? 'initial'}
+              api={api}
+              cashAccountIds={config.mappings.filter((m) => m.mode === 'CASH').map((m) => m.wfAccountId)}
+            />
           </TabsContent>
           <TabsContent value="settings" className="mt-0">
             <SettingsPanel
