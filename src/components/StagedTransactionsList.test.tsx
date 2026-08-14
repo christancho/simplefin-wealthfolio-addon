@@ -34,6 +34,17 @@ describe('StagedTransactionsList', () => {
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
   });
 
+  it('surfaces a visible error when loading staged candidates fails', async () => {
+    const host = createMockHost();
+    host.api.storage.get = vi.fn(async () => {
+      throw new Error('storage unavailable');
+    }) as never;
+
+    render(<StagedTransactionsList api={host.api} cashAccountIds={['WF-CASH']} />);
+
+    expect(await screen.findByText(/storage unavailable/i)).toBeInTheDocument();
+  });
+
   it('lists pending and ambiguous candidates with their amount and comment', async () => {
     const host = createMockHost();
     await writeStaging(host.api, [pending, ambiguous]);

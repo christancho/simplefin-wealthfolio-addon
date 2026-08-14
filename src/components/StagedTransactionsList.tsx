@@ -31,7 +31,11 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    setCandidates(await readStaging(api));
+    try {
+      setCandidates(await readStaging(api));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   useEffect(() => {
@@ -42,14 +46,22 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
   async function dismiss(target: StagedCandidate) {
     const next = (candidates ?? []).filter((c) => c.sfTransactionId !== target.sfTransactionId);
     setCandidates(next);
-    await writeStaging(api, next);
+    try {
+      await writeStaging(api, next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function openResolve(candidate: StagedCandidate) {
     setError(null);
     setResolving(candidate);
     setChosenId(null);
-    setChoices(await describeWithdrawals(api, cashAccountIds, candidate.candidateWithdrawalIds));
+    try {
+      setChoices(await describeWithdrawals(api, cashAccountIds, candidate.candidateWithdrawalIds));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function confirmResolve() {
@@ -65,11 +77,21 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
     }
   }
 
-  if (candidates === null) return null;
-  if (candidates.length === 0) return <p className="text-muted-foreground text-sm">No staged transactions.</p>;
+  if (candidates === null) {
+    return error ? <p className="text-destructive text-sm">{error}</p> : null;
+  }
+  if (candidates.length === 0) {
+    return (
+      <>
+        {error && <p className="text-destructive text-sm">{error}</p>}
+        <p className="text-muted-foreground text-sm">No staged transactions.</p>
+      </>
+    );
+  }
 
   return (
     <>
+      {error && <p className="text-destructive text-sm">{error}</p>}
       <Table aria-label="Staged transactions">
         <TableHeader>
           <TableRow>
