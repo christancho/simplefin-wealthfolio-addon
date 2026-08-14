@@ -26,40 +26,50 @@ const txn = (over: Partial<Record<string, unknown>> = {}) => ({
 
 describe('toActivityImport', () => {
   it('maps a negative amount to a WITHDRAWAL with positive magnitude', () => {
-    const activity = toActivityImport(txn() as never, mapping, 'USD');
+    const activity = toActivityImport(txn() as never, mapping, 'USD', 'CASH');
     expect(activity.activityType).toBe('WITHDRAWAL');
     expect(activity.amount).toBe('42.10');
     expect(activity.accountId).toBe('WF-1');
     expect(activity.currency).toBe('USD');
   });
 
-  it('maps a positive amount to a DEPOSIT', () => {
-    const activity = toActivityImport(txn({ amount: '2000.00' }) as never, mapping, 'USD');
+  it('maps a positive amount to a DEPOSIT on a non-credit-card account', () => {
+    const activity = toActivityImport(txn({ amount: '2000.00' }) as never, mapping, 'USD', 'CASH');
     expect(activity.activityType).toBe('DEPOSIT');
     expect(activity.amount).toBe('2000.00');
   });
 
+  it('maps a positive amount to CREDIT on a credit-card account, since the host rejects DEPOSIT there', () => {
+    // Regression test: confirmed against a live host — DEPOSIT on a
+    // CREDIT_CARD account is rejected with "DEPOSIT activities are not
+    // supported for credit card accounts"; CREDIT is accepted.
+    const activity = toActivityImport(txn({ amount: '50.00' }) as never, mapping, 'USD', 'CREDIT_CARD');
+    expect(activity.activityType).toBe('CREDIT');
+  });
+
+  it('still maps a negative amount to WITHDRAWAL on a credit-card account (a purchase)', () => {
+    const activity = toActivityImport(txn() as never, mapping, 'USD', 'CREDIT_CARD');
+    expect(activity.activityType).toBe('WITHDRAWAL');
+  });
+
   it('keeps the amount as a string to avoid float rounding', () => {
-    const activity = toActivityImport(txn({ amount: '-0.1' }) as never, mapping, 'USD');
+    const activity = toActivityImport(txn({ amount: '-0.1' }) as never, mapping, 'USD', 'CASH');
     expect(typeof activity.amount).toBe('string');
     expect(activity.amount).toBe('0.1');
   });
 
   it('prefers payee over description for the comment, falling back to description', () => {
-    expect(toActivityImport(txn() as never, mapping, 'USD').comment).toBe('Blue Bottle');
-    expect(toActivityImport(txn({ payee: null }) as never, mapping, 'USD').comment).toBe('COFFEE');
+    expect(toActivityImport(txn() as never, mapping, 'USD', 'CASH').comment).toBe('Blue Bottle');
+    expect(toActivityImport(txn({ payee: null }) as never, mapping, 'USD', 'CASH').comment).toBe('COFFEE');
   });
 
   it('converts the epoch posted date to an ISO date', () => {
-    const activity = toActivityImport(txn() as never, mapping, 'USD');
+    const activity = toActivityImport(txn() as never, mapping, 'USD', 'CASH');
     expect(activity.date).toBe('2025-08-06');
   });
 
   it('sets symbol to an empty string, since the host rejects the whole batch if it is absent', () => {
-    // Regression test: the host's import endpoint deserializes `symbol` as a
-    // required field even though the addon-sdk types call it optional —
-    // omitting it causes checkImport to fail instantly for every row.
-    const activity = toActivityImport(txn() as never, mapping, 'USD');
+    const activity = toActivityImport(txn() as never, mapping, 'USD', 'CASH');
     expect(activity.symbol).toBe('');
   });
 });
@@ -90,6 +100,8 @@ describe('syncCashAccount', () => {
       mapping,
       account([txn({ pending: true })]) as never,
       emptyWatermark(),
+      'CASH',
+      [],
     );
 
     expect(host.api.activities.import).not.toHaveBeenCalled();
@@ -99,10 +111,14 @@ describe('syncCashAccount', () => {
     const host = createMockHost();
     host.api.activities.checkImport = vi.fn(async (a) => a);
 
-    await syncCashAccount(host.api, mapping, account([txn()]) as never, {
-      lastPosted: 1754438400,
-      recentIds: ['TXN-1'],
-    });
+    await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn()]) as never,
+      { lastPosted: 1754438400, recentIds: ['TXN-1'] },
+      'CASH',
+      [],
+    );
 
     expect(host.api.activities.import).not.toHaveBeenCalled();
   });
@@ -119,18 +135,11 @@ describe('syncCashAccount', () => {
       return {
         activities: [],
         importRunId: 'R1',
-        summary: {
-          total: 1,
-          imported: 1,
-          skipped: 0,
-          duplicates: 0,
-          assetsCreated: 0,
-          success: true,
-        },
+        summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
       };
     });
 
-    await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark());
+    await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', []);
     expect(order).toEqual(['check', 'import']);
   });
 
@@ -141,12 +150,7 @@ describe('syncCashAccount', () => {
     );
     host.api.activities.import = vi.fn();
 
-    const { result } = await syncCashAccount(
-      host.api,
-      mapping,
-      account([txn()]) as never,
-      emptyWatermark(),
-    );
+    const { result } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', []);
 
     expect(host.api.activities.import).not.toHaveBeenCalled();
     expect(result.duplicates).toBe(1);
@@ -159,12 +163,7 @@ describe('syncCashAccount', () => {
     );
     host.api.activities.import = vi.fn();
 
-    const { result } = await syncCashAccount(
-      host.api,
-      mapping,
-      account([txn()]) as never,
-      emptyWatermark(),
-    );
+    const { result } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', []);
 
     expect(host.api.activities.import).not.toHaveBeenCalled();
     expect(result.skipped).toBe(1);
@@ -179,12 +178,7 @@ describe('syncCashAccount', () => {
       summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
     }));
 
-    const { watermark } = await syncCashAccount(
-      host.api,
-      mapping,
-      account([txn()]) as never,
-      emptyWatermark(),
-    );
+    const { watermark } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', []);
 
     expect(watermark.lastPosted).toBe(1754438400);
     expect(watermark.recentIds).toContain('TXN-1');
@@ -197,9 +191,8 @@ describe('syncCashAccount', () => {
       throw new Error('host exploded');
     });
 
-    const before = emptyWatermark();
     await expect(
-      syncCashAccount(host.api, mapping, account([txn()]) as never, before),
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', []),
     ).rejects.toThrow(/host exploded/);
   });
 
@@ -210,12 +203,10 @@ describe('syncCashAccount', () => {
     });
 
     await expect(
-      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark()),
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', []),
     ).rejects.toThrow(/Unprocessable Entity/);
 
-    expect(host.api.logger.error).toHaveBeenCalledWith(
-      expect.stringContaining(mapping.sfAccountName),
-    );
+    expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining(mapping.sfAccountName));
     expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('"symbol":""'));
   });
 
@@ -227,12 +218,35 @@ describe('syncCashAccount', () => {
     });
 
     await expect(
-      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark()),
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', []),
     ).rejects.toThrow(/Unprocessable Entity/);
 
-    expect(host.api.logger.error).toHaveBeenCalledWith(
-      expect.stringContaining(mapping.sfAccountName),
-    );
+    expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining(mapping.sfAccountName));
     expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('"amount":"42.10"'));
+  });
+
+  it('imports an inflow transaction on a credit-card account as CREDIT, not DEPOSIT', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) => a.map((row) => ({ ...row, isValid: true })));
+    let importedRows: ActivityImport[] = [];
+    host.api.activities.import = vi.fn(async (rows: ActivityImport[]) => {
+      importedRows = rows;
+      return {
+        activities: [],
+        importRunId: 'R1',
+        summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+      };
+    });
+
+    await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn({ amount: '50.00', payee: 'Card Payment' })]) as never,
+      emptyWatermark(),
+      'CREDIT_CARD',
+      [],
+    );
+
+    expect(importedRows[0].activityType).toBe('CREDIT');
   });
 });

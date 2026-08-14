@@ -1,10 +1,10 @@
-import type { ActivityImport, HostAPI } from '@wealthfolio/addon-sdk';
+import type { AccountType, ActivityImport, HostAPI } from '@wealthfolio/addon-sdk';
 import type { SfAccount, SfTransaction } from '../simplefin/parse';
 import type { AccountMapping } from '../storage/config';
 import { advanceWatermark, shouldPush, type Watermark } from '../storage/watermark';
 
 /** Epoch seconds -> YYYY-MM-DD in UTC, the form Wealthfolio's importer expects. */
-function isoDate(epochSeconds: number): string {
+export function isoDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
 }
 
@@ -17,13 +17,19 @@ export function toActivityImport(
   txn: SfTransaction,
   mapping: AccountMapping,
   currency: string,
+  destinationAccountType: AccountType,
 ): ActivityImport {
   const isOutflow = txn.amount.trim().startsWith('-');
   const magnitude = txn.amount.trim().replace(/^-/, '');
+  // The host rejects DEPOSIT outright on a CREDIT_CARD account
+  // ("DEPOSIT activities are not supported for credit card accounts",
+  // confirmed against a live host) — CREDIT is the type it accepts for
+  // money landing on a card.
+  const inflowType = destinationAccountType === 'CREDIT_CARD' ? 'CREDIT' : 'DEPOSIT';
 
   return {
     accountId: mapping.wfAccountId,
-    activityType: isOutflow ? 'WITHDRAWAL' : 'DEPOSIT',
+    activityType: isOutflow ? 'WITHDRAWAL' : inflowType,
     date: isoDate(txn.posted),
     amount: magnitude,
     currency,
@@ -49,16 +55,18 @@ export async function syncCashAccount(
   mapping: AccountMapping,
   sfAccount: SfAccount,
   watermark: Watermark,
-): Promise<{ result: CashSyncCounts; watermark: Watermark }> {
+  accountType: AccountType,
+  paymentKeywords: string[],
+): Promise<{ result: CashSyncCounts; watermark: Watermark; candidates: never[] }> {
   // Pending transactions are excluded from v1: their id and amount can both
   // change once posted, which would push a row we could never reconcile.
   const candidates = sfAccount.transactions.filter((t) => !t.pending && shouldPush(watermark, t));
 
   if (candidates.length === 0) {
-    return { result: { imported: 0, skipped: 0, duplicates: 0 }, watermark };
+    return { result: { imported: 0, skipped: 0, duplicates: 0 }, watermark, candidates: [] };
   }
 
-  const rows = candidates.map((t) => toActivityImport(t, mapping, sfAccount.currency));
+  const rows = candidates.map((t) => toActivityImport(t, mapping, sfAccount.currency, accountType));
   let checked;
   try {
     checked = await api.activities.checkImport(rows);
@@ -107,7 +115,7 @@ export async function syncCashAccount(
       watermark,
       candidates.filter((_, i) => checked[i].duplicateOfId),
     );
-    return { result: { imported: 0, skipped, duplicates }, watermark: advanced };
+    return { result: { imported: 0, skipped, duplicates }, watermark: advanced, candidates: [] };
   }
 
   let outcome;
@@ -130,5 +138,6 @@ export async function syncCashAccount(
     // Only advance over what was actually accepted — if the import throws, this
     // line is never reached and the watermark stays put, so the next run retries.
     watermark: advanceWatermark(watermark, importableTxns),
+    candidates: [],
   };
 }

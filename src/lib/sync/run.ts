@@ -1,4 +1,4 @@
-import type { HostAPI } from '@wealthfolio/addon-sdk';
+import type { AccountType, HostAPI } from '@wealthfolio/addon-sdk';
 import { fetchAccounts } from '../simplefin/client';
 import type { SfAccount } from '../simplefin/parse';
 import type { AccountMapping, SyncConfig } from '../storage/config';
@@ -87,6 +87,7 @@ async function syncOne(
   mapping: AccountMapping,
   sfAccount: SfAccount | undefined,
   wfBalances: Map<string, string>,
+  wfAccountTypes: Map<string, AccountType>,
 ): Promise<AccountRunResult> {
   const base: AccountRunResult = {
     sfAccountId: mapping.sfAccountId,
@@ -135,7 +136,14 @@ async function syncOne(
       ? ((await fetchFullHistory(api, baseUrl, mapping.sfAccountId)) ?? sfAccount)
       : sfAccount;
 
-    const { result, watermark: next } = await syncCashAccount(api, mapping, syncSfAccount, watermark);
+    const { result, watermark: next } = await syncCashAccount(
+      api,
+      mapping,
+      syncSfAccount,
+      watermark,
+      wfAccountTypes.get(mapping.wfAccountId) ?? 'CASH',
+      [],
+    );
     await writeWatermark(api, mapping.sfAccountId, next);
 
     const plugImported = isFirstSync ? await pushOpeningBalance(api, mapping, syncSfAccount) : 0;
@@ -198,9 +206,11 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   // Wealthfolio balances for the post-sync mismatch check. A failure here must
   // not fail the run — the check is diagnostic, so it degrades to "unavailable".
   const wfBalances = new Map<string, string>();
+  const wfAccountTypes = new Map<string, AccountType>();
   try {
     for (const account of await api.accounts.getAll()) {
       if (Number.isFinite(account.balance)) wfBalances.set(account.id, String(account.balance));
+      wfAccountTypes.set(account.id, account.accountType);
     }
   } catch (error) {
     api.logger.error(
@@ -213,7 +223,7 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   const results: AccountRunResult[] = [];
   for (const mapping of config.mappings) {
     results.push(
-      await syncOne(api, config.baseUrl, mapping, bySfId.get(mapping.sfAccountId), wfBalances),
+      await syncOne(api, config.baseUrl, mapping, bySfId.get(mapping.sfAccountId), wfBalances, wfAccountTypes),
     );
   }
 
