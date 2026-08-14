@@ -12,17 +12,20 @@ function renderPanel(overrides: Partial<Parameters<typeof SettingsPanel>[0]> = {
   const host = createMockHost();
   const onDisconnected = vi.fn();
   const onLookbackDaysChange = vi.fn();
+  const onPaymentKeywordsChange = vi.fn();
   render(
     <SettingsPanel
       api={host.api}
       baseUrl={BASE_URL}
       lookbackDays={DEFAULT_LOOKBACK_DAYS}
       onLookbackDaysChange={onLookbackDaysChange}
+      paymentKeywords={DEFAULT_PAYMENT_KEYWORDS}
+      onPaymentKeywordsChange={onPaymentKeywordsChange}
       onDisconnected={onDisconnected}
       {...overrides}
     />,
   );
-  return { host, onDisconnected, onLookbackDaysChange };
+  return { host, onDisconnected, onLookbackDaysChange, onPaymentKeywordsChange };
 }
 
 describe('SettingsPanel', () => {
@@ -98,5 +101,31 @@ describe('SettingsPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
     expect(onLookbackDaysChange).toHaveBeenCalledWith(90);
+  });
+
+  it('shows the current keywords as a comma-separated list', () => {
+    renderPanel({ paymentKeywords: ['PAYMENT', 'AUTOPAY'] });
+    expect(screen.getByLabelText(/payment keywords/i)).toHaveValue('PAYMENT, AUTOPAY');
+  });
+
+  it('disables Save until the keyword list actually changes', async () => {
+    renderPanel({ paymentKeywords: ['PAYMENT'] });
+    const input = screen.getByLabelText(/payment keywords/i);
+    const save = screen.getByRole('button', { name: /^save keywords$/i });
+
+    expect(save).toBeDisabled();
+    await userEvent.type(input, ', AUTOPAY');
+    expect(save).toBeEnabled();
+  });
+
+  it('saves the comma-separated input as a trimmed keyword array', async () => {
+    const { onPaymentKeywordsChange } = renderPanel({ paymentKeywords: ['PAYMENT'] });
+    const input = screen.getByLabelText(/payment keywords/i);
+
+    await userEvent.clear(input);
+    await userEvent.type(input, ' payment ,  autopay ,thank you ');
+    await userEvent.click(screen.getByRole('button', { name: /^save keywords$/i }));
+
+    expect(onPaymentKeywordsChange).toHaveBeenCalledWith(['payment', 'autopay', 'thank you']);
   });
 });
