@@ -3,11 +3,12 @@ import { fetchAccounts } from '../simplefin/client';
 import type { SfAccount } from '../simplefin/parse';
 import type { AccountMapping, SyncConfig } from '../storage/config';
 import { appendRun, type AccountRunResult, type SyncRun } from '../storage/history';
-import type { StagedCandidate } from '../storage/staging';
+import { readStaging, writeStaging, type StagedCandidate } from '../storage/staging';
 import { readWatermark, writeWatermark } from '../storage/watermark';
 import { syncCashAccount } from './activities';
 import { compareBalances } from './balance';
 import { buildOpeningBalanceActivity } from './openingBalance';
+import { runReconciliation } from './reconciliation';
 import { syncHoldingsAccount } from './snapshots';
 
 /**
@@ -247,11 +248,21 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
     detectedCandidates.push(...candidates);
   }
 
-  // Not yet persisted or reconciled — Task 6 wires this into staging.ts and
-  // the reconciliation pass. This line exists solely so the variable above
-  // isn't flagged as unused past the loop.
-  if (detectedCandidates.length > 0) {
-    api.logger.debug(`[simplefin] detected ${detectedCandidates.length} payment candidate(s) this run`);
+  const cashAccountIds = config.mappings.filter((m) => m.mode === 'CASH').map((m) => m.wfAccountId);
+  try {
+    const existingStaging = await readStaging(api);
+    const { candidates: remainingCandidates } = await runReconciliation(
+      api,
+      [...existingStaging, ...detectedCandidates],
+      cashAccountIds,
+      nowSeconds,
+    );
+    await writeStaging(api, remainingCandidates);
+  } catch (error) {
+    // Reconciliation is a secondary pass over transactions that already
+    // synced successfully — a failure here must not undo or block the run
+    // that already happened.
+    api.logger.error(`[simplefin] reconciliation pass failed: ${String(error)}`);
   }
 
   const run: SyncRun = {

@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityImport } from '@wealthfolio/addon-sdk';
 import { createMockHost } from '../../test/mockHost';
 import type { SyncConfig } from '../storage/config';
+import { readStaging, writeStaging } from '../storage/staging';
 import { writeWatermark } from '../storage/watermark';
 import { runSync } from './run';
 
@@ -67,6 +68,10 @@ function okHost() {
 }
 
 describe('runSync', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('syncs every mapped account', async () => {
     const run = await runSync(okHost().api, config);
     expect(run.accounts).toHaveLength(2);
@@ -242,6 +247,159 @@ describe('runSync', () => {
     // 0 withdrawal candidates from the empty mock search means nothing to
     // reconcile against yet, and no error was thrown.
     expect(host.api.activities.import).toHaveBeenCalled();
+  });
+
+  it('persists a detected candidate and reconciles it against an existing withdrawal in the same run', async () => {
+    // runSync's own nowSeconds is real wall-clock time, but the fixture below
+    // reuses this file's fixed 2025-08-06 posted date; pin the clock nearby so
+    // the 7-day expiry window in reconciliation.ts doesn't age it out
+    // regardless of when this suite actually runs.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1754438400 * 1000 + 2 * 86_400_000));
+
+    const host = createMockHost();
+    host.respond(/\/accounts/, {
+      body: JSON.stringify({
+        errors: [],
+        accounts: [
+          {
+            org: { name: 'Card Co' },
+            id: 'ACT-CARD',
+            name: 'Visa',
+            currency: 'USD',
+            balance: '0.00',
+            'balance-date': 1754438400,
+            transactions: [
+              { id: 'TXN-PAY', posted: 1754438400, amount: '50.00', description: 'Online Payment Thank You' },
+            ],
+            holdings: [],
+          },
+        ],
+      }),
+    });
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) => a.map((row) => ({ ...row, isValid: true })));
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R',
+      summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+    }));
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') {
+        return {
+          data: [
+            {
+              id: 'CARD-ACT-1',
+              accountId: 'ACT-CARD',
+              activityType: 'CREDIT',
+              date: '2025-08-06T00:00:00+00:00',
+              amount: '50',
+              currency: 'USD',
+              comment: 'Online Payment Thank You',
+            },
+          ],
+          meta: { totalRowCount: 1 },
+        };
+      }
+      return {
+        data: [
+          {
+            id: 'CASH-ACT-1',
+            accountId: 'WF-CASH',
+            activityType: 'WITHDRAWAL',
+            date: '2025-08-05T00:00:00+00:00',
+            amount: '50',
+            currency: 'USD',
+            comment: 'Bill Pay',
+          },
+        ],
+        meta: { totalRowCount: 1 },
+      };
+    }) as never;
+    host.api.activities.saveMany = vi.fn(async (req) => ({
+      created: [],
+      updated: req.updates ?? [],
+      deleted: [],
+      createdMappings: [],
+      errors: [],
+    })) as never;
+    host.api.accounts.getAll = vi.fn(async () => [
+      { id: 'ACT-CARD', accountType: 'CREDIT_CARD', balance: 0 },
+      { id: 'WF-CASH', accountType: 'CASH', balance: 0 },
+    ] as never);
+
+    const cardConfig = {
+      baseUrl: 'https://bridge.simplefin.org/simplefin',
+      mappings: [
+        { sfAccountId: 'ACT-CARD', wfAccountId: 'ACT-CARD', mode: 'CASH' as const, sfAccountName: 'Visa', orgName: 'Card Co' },
+        { sfAccountId: 'WF-CASH', wfAccountId: 'WF-CASH', mode: 'CASH' as const, sfAccountName: 'Checking', orgName: 'Bank A' },
+      ],
+      lookbackDays: 30,
+      paymentKeywords: ['PAYMENT'],
+    };
+
+    await runSync(host.api, cardConfig);
+
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
+    expect(await readStaging(host.api)).toEqual([]);
+  });
+
+  it('keeps an unresolved candidate staged for the next run', async () => {
+    const host = createMockHost();
+    host.respond(/\/accounts/, { body: JSON.stringify({ errors: [], accounts: [] }) });
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'ACT-CARD', accountType: 'CREDIT_CARD', balance: 0 }] as never);
+
+    await writeStaging(host.api, [
+      {
+        sfTransactionId: 'TXN-OLD',
+        cardAccountId: 'ACT-CARD',
+        cardActivityId: null,
+        amount: '50.00',
+        postedDate: new Date().toISOString().slice(0, 10),
+        comment: 'Online Payment Thank You',
+        status: 'pending',
+        candidateWithdrawalIds: [],
+      },
+    ]);
+    host.api.activities.search = vi.fn(async () => ({ data: [], meta: { totalRowCount: 0 } })) as never;
+
+    await runSync(host.api, {
+      baseUrl: 'https://bridge.simplefin.org/simplefin',
+      mappings: [],
+      lookbackDays: 30,
+      paymentKeywords: ['PAYMENT'],
+    });
+
+    const staged = await readStaging(host.api);
+    expect(staged).toHaveLength(1);
+    expect(staged[0].sfTransactionId).toBe('TXN-OLD');
+  });
+
+  it('does not let a reconciliation failure fail the whole sync run', async () => {
+    const host = okHost();
+    await writeStaging(host.api, [
+      {
+        sfTransactionId: 'TXN-BAD',
+        cardAccountId: 'WF-1',
+        cardActivityId: null,
+        amount: '50.00',
+        postedDate: new Date().toISOString().slice(0, 10),
+        comment: 'Payment',
+        status: 'pending',
+        candidateWithdrawalIds: [],
+      },
+    ]);
+    host.api.activities.search = vi.fn(async () => {
+      throw new Error('search unavailable');
+    }) as never;
+
+    const run = await runSync(host.api, config);
+    expect(run.accounts.every((a) => a.error === null)).toBe(true);
+    expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('search unavailable'));
   });
 });
 
