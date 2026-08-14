@@ -154,16 +154,22 @@ probe's live data showed Wealthfolio normalizes persisted amounts (`"40"`,
 (`"40.00"`), so a raw string comparison between a freshly-detected candidate
 and a `search()` result would false-negative on exactly-matching amounts.
 `normalise()` already solves this without going through float, consistent
-with this codebase's existing money-handling convention. This only needs
-`manifest.json`'s `activities` permission to declare `search` and `update`
-(not `getAll` or `saveMany` — nothing in this design calls the whole-account
-listing or bulk-delete endpoints).
+with this codebase's existing money-handling convention. This needs
+`manifest.json`'s `activities` permission to declare `search`, `update`, and
+`saveMany` (not `getAll`, which nothing in this design calls — see §6 for
+why `saveMany` is required alongside `update`).
 
 ### 6. Reclassification
 
-`activities.update()` both legs — cash leg → `TRANSFER_OUT`, card leg →
-`TRANSFER_IN`. Each `ActivityUpdate` call echoes back the full existing row
-(`id`, `accountId`, `activityType`, `activityDate`, `amount`, `currency`,
+Both legs are reclassified in a single `activities.saveMany({ updates: [cardUpdate, withdrawalUpdate] })`
+call — cash leg → `TRANSFER_OUT`, card leg → `TRANSFER_IN` — rather than two
+sequential `activities.update()` calls. (Amended during implementation: a
+task review found the two-call form can leave a pair half-reclassified and
+permanently stuck if the second call fails, since resolving the card leg
+again only searches `activityTypes: 'CREDIT'` and it would already be
+`TRANSFER_IN`. `saveMany` gives one round trip and one exception path
+instead.) Each `ActivityUpdate` in the batch echoes back the full existing
+row (`id`, `accountId`, `activityType`, `activityDate`, `amount`, `currency`,
 `comment`) rather than a partial patch — `ActivityUpdate`'s only *required*
 fields are `id`/`accountId`/`activityType`/`activityDate`, and other omitted
 fields risk being nulled by the host. No `sourceGroupId` is set (confirmed
@@ -204,8 +210,8 @@ in `runSync`.
       pattern)
 - [ ] Matching/reconciliation pass wired into `runSync` (0-indexed
       pagination, client-side date/amount filtering)
-- [ ] `activities.update()` reclassification for unique matches (full row
-      echo, no `sourceGroupId`)
+- [ ] `activities.saveMany()` reclassification for unique matches (full row
+      echo per leg, no `sourceGroupId`)
 - [ ] Expiry sweep (7 days from card payment date)
 - [ ] Staged Transactions UI (list + manual resolve/dismiss for ambiguous
       and pending)

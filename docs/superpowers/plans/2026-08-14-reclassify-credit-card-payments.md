@@ -4,7 +4,18 @@
 
 **Goal:** Detect credit-card bill payments, stage them across sync runs, match each to its paying cash-account withdrawal, and reclassify both legs from `CREDIT`/`WITHDRAWAL` to `TRANSFER_IN`/`TRANSFER_OUT` — fixing a pre-existing bug (the host rejects `DEPOSIT` on credit-card accounts) along the way.
 
-**Architecture:** A per-transaction detection step inside the existing cash-sync path stages keyword-matched card credits; a separate reconciliation pass (new module, invoked once per `runSync`) matches staged candidates against withdrawal activities host-side via `activities.search()` and reclassifies unique matches via `activities.update()`. Staging persists in its own `storage` key so partial matches survive across runs. A new Sync-page tab surfaces unresolved candidates for manual resolution.
+**Architecture:** A per-transaction detection step inside the existing cash-sync path stages keyword-matched card credits; a separate reconciliation pass (new module, invoked once per `runSync`) matches staged candidates against withdrawal activities host-side via `activities.search()` and reclassifies unique matches via a single `activities.saveMany()` call covering both legs. Staging persists in its own `storage` key so partial matches survive across runs. A new Sync-page tab surfaces unresolved candidates for manual resolution.
+
+> **Amended after Task 5's review (see ledger):** the original design called for two
+> sequential `activities.update()` calls per reclassified pair. The reviewer found
+> this could leave a pair half-reclassified and permanently stuck if the second call
+> failed — `findCardActivity` only searches `activityTypes: 'CREDIT'`, so once the
+> card leg becomes `TRANSFER_IN` it can never be re-found on retry, and the candidate
+> silently expires after 7 days with one leg reclassified and the other stuck as
+> `WITHDRAWAL`. Ruling: `reclassifyPair` uses `activities.saveMany({ updates: [...] })`
+> instead — one round trip, one exception path, simpler retry-from-pending semantics.
+> Every task section below reflects this; the "Architecture" line above and the
+> Global Constraints are updated accordingly.
 
 **Tech Stack:** TypeScript, React, Vitest, `@wealthfolio/addon-sdk` `HostAPI`.
 
@@ -16,8 +27,9 @@
 - Never parse money amounts to `Number`/`float` for comparison or arithmetic — use `normalise()` (string-based) for equality, matching this repo's existing convention.
 - Every caught error is logged via `api.logger.error` with account/candidate context, or re-thrown — never swallowed silently.
 - `activities.search()` pages from `0`, not `1`.
-- `activities.update()`'s payload must echo the full existing row (`id`, `accountId`, `activityType`, `activityDate`, `amount`, `currency`, `comment`) — omitted fields risk being nulled by the host.
-- `manifest.json`'s `activities` permission needs `search` and `update` added — not `getAll` or `saveMany`, which nothing in this feature calls.
+- Each leg's update payload must echo the full existing row (`id`, `accountId`, `activityType`, `activityDate`, `amount`, `currency`, `comment`) — omitted fields risk being nulled by the host.
+- `manifest.json`'s `activities` permission needs `search`, `update`, and `saveMany` added — not `getAll`, which nothing in this feature calls. (`update` alone is unused by `reconciliation.ts` after the Task 5 ruling below, but is kept declared since nothing in this plan removes it and a future direct-update path may still want it; `saveMany` is what `reclassifyPair` actually calls.)
+- Reclassifying a matched pair is one `activities.saveMany({ updates: [cardUpdate, withdrawalUpdate] })` call, not two sequential `activities.update()` calls — ruling from Task 5's review, see the Architecture note above.
 - Per-candidate and per-account failures are isolated: one bad match/API error must not block any other candidate or account.
 
 ---
@@ -44,8 +56,8 @@
 - `src/components/SettingsPanel.test.tsx` — new tests for the keyword editor.
 - `src/pages/SyncPage.tsx` — add a "Staged" tab rendering `StagedTransactionsList`.
 - `src/pages/SyncPage.sync.test.tsx` — add coverage for the new tab appearing and reading staged candidates.
-- `src/test/mockHost.ts` — add `activities.search`/`activities.update` mocks (currently only `checkImport`/`import` exist).
-- `manifest.json` — declare `search` and `update` under the `activities` permission.
+- `src/test/mockHost.ts` — add `activities.search`/`activities.update`/`activities.saveMany` mocks (currently only `checkImport`/`import` exist).
+- `manifest.json` — declare `search`, `update`, and `saveMany` under the `activities` permission.
 
 ---
 
@@ -1288,6 +1300,25 @@ git commit -m "feat: detect keyword-matched credit-card payments as staging cand
 - Consumes: `StagedCandidate` from `../storage/staging`; `normalise` from `./balance`; `ActivityDetails`/`ActivityUpdate`/`HostAPI` from `@wealthfolio/addon-sdk`.
 - Produces: `runReconciliation(api, candidates, cashAccountIds, nowSeconds): Promise<{ candidates: StagedCandidate[]; summary: { resolved: number; expired: number } }>`, `resolveAmbiguous(api, candidate, cashAccountIds, chosenWithdrawalId): Promise<void>`, `findCardActivity(api, candidate): Promise<ActivityDetails | null>`, `describeWithdrawals(api, cashAccountIds, ids): Promise<ActivityDetails[]>` — all exported from `src/lib/sync/reconciliation.ts`, for Task 6 (wiring) and Task 7 (UI) to consume.
 
+> **Post-implementation amendment (fix round 1, see ledger):** the task text
+> below — as originally written and as this task was first implemented —
+> has `reclassifyPair` issue two sequential `api.activities.update()` calls,
+> and its tests assert on `host.api.activities.update` being called twice.
+> The task reviewer found this leaves a pair permanently half-reclassified
+> if the second call fails (the card leg can never be re-found afterward,
+> since lookups only search `activityTypes: 'CREDIT'` and it's now
+> `TRANSFER_IN`). The fix — already applied to the actual code and its
+> tests, superseding every `activities.update` reference below — replaces
+> `reclassifyPair`'s two `update()` calls with one
+> `api.activities.saveMany({ updates: [cardUpdate, withdrawalUpdate] })`
+> call, `manifest.json` additionally declares `saveMany`, and
+> `mockHost.ts` gets a `saveMany` mock alongside `search`/`update`. Test
+> assertions that checked `activities.update` for pair-reclassification now
+> check `activities.saveMany` was called once with both updates in its
+> `updates` array. This note exists for historical accuracy; Tasks 6 and 7
+> below are already written against the corrected `saveMany`-based
+> behavior.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
@@ -1915,7 +1946,13 @@ Then add these three `it()` blocks inside the existing `describe('runSync', ...)
         meta: { totalRowCount: 1 },
       };
     }) as never;
-    host.api.activities.update = vi.fn(async (u) => u as never);
+    host.api.activities.saveMany = vi.fn(async (req) => ({
+      created: [],
+      updated: req.updates ?? [],
+      deleted: [],
+      createdMappings: [],
+      errors: [],
+    })) as never;
     host.api.accounts.getAll = vi.fn(async () => [
       { id: 'ACT-CARD', accountType: 'CREDIT_CARD', balance: 0 },
       { id: 'WF-CASH', accountType: 'CASH', balance: 0 },
@@ -1933,8 +1970,12 @@ Then add these three `it()` blocks inside the existing `describe('runSync', ...)
 
     await runSync(host.api, cardConfig);
 
-    expect(host.api.activities.update).toHaveBeenCalledWith(expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }));
-    expect(host.api.activities.update).toHaveBeenCalledWith(expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }));
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
     expect(await readStaging(host.api)).toEqual([]);
   });
 
@@ -2122,7 +2163,7 @@ describe('StagedTransactionsList', () => {
     await userEvent.click(await screen.findByRole('button', { name: /dismiss/i }));
 
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
-    expect(host.api.activities.update).not.toHaveBeenCalled();
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
     expect(host.storage.get('simplefin.staging')).toBe('[]');
   });
 
@@ -2144,7 +2185,13 @@ describe('StagedTransactionsList', () => {
         meta: { totalRowCount: 2 },
       };
     }) as never;
-    host.api.activities.update = vi.fn(async (u) => u as never);
+    host.api.activities.saveMany = vi.fn(async (req) => ({
+      created: [],
+      updated: req.updates ?? [],
+      deleted: [],
+      createdMappings: [],
+      errors: [],
+    })) as never;
 
     render(<StagedTransactionsList api={host.api} cashAccountIds={['WF-CASH']} />);
 
@@ -2155,7 +2202,12 @@ describe('StagedTransactionsList', () => {
     await userEvent.click(within(dialog).getByText(/bill pay a/i));
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm/i }));
 
-    expect(host.api.activities.update).toHaveBeenCalledWith(expect.objectContaining({ id: 'CASH-A', activityType: 'TRANSFER_OUT' }));
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'CARD-ACT-2', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'CASH-A', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
   });
 });
