@@ -1,12 +1,14 @@
-import type { HostAPI } from '@wealthfolio/addon-sdk';
+import type { AccountType, HostAPI } from '@wealthfolio/addon-sdk';
 import { fetchAccounts } from '../simplefin/client';
 import type { SfAccount } from '../simplefin/parse';
-import type { AccountMapping, SyncConfig } from '../storage/config';
+import { cashAccountIdsFrom, type AccountMapping, type SyncConfig } from '../storage/config';
 import { appendRun, type AccountRunResult, type SyncRun } from '../storage/history';
+import { readStaging, writeStaging, type StagedCandidate } from '../storage/staging';
 import { readWatermark, writeWatermark } from '../storage/watermark';
 import { syncCashAccount } from './activities';
 import { compareBalances } from './balance';
 import { buildOpeningBalanceActivity } from './openingBalance';
+import { runReconciliation } from './reconciliation';
 import { syncHoldingsAccount } from './snapshots';
 
 /**
@@ -87,7 +89,9 @@ async function syncOne(
   mapping: AccountMapping,
   sfAccount: SfAccount | undefined,
   wfBalances: Map<string, string>,
-): Promise<AccountRunResult> {
+  wfAccountTypes: Map<string, AccountType>,
+  paymentKeywords: string[],
+): Promise<{ accountResult: AccountRunResult; candidates: StagedCandidate[] }> {
   const base: AccountRunResult = {
     sfAccountId: mapping.sfAccountId,
     sfAccountName: mapping.sfAccountName,
@@ -103,10 +107,13 @@ async function syncOne(
 
   if (!sfAccount) {
     return {
-      ...base,
-      error:
-        `SimpleFIN account ${mapping.sfAccountId} was not returned by the Bridge. ` +
-        'It may have been disconnected — re-check the mapping.',
+      accountResult: {
+        ...base,
+        error:
+          `SimpleFIN account ${mapping.sfAccountId} was not returned by the Bridge. ` +
+          'It may have been disconnected — re-check the mapping.',
+      },
+      candidates: [],
     };
   }
 
@@ -114,14 +121,17 @@ async function syncOne(
     if (mapping.mode === 'HOLDINGS') {
       const { imported, skipped } = await syncHoldingsAccount(api, mapping, sfAccount);
       return {
-        ...base,
-        imported,
-        skipped,
-        duplicates: 0,
-        balanceMismatch: compareBalances(
-          sfAccount.balance,
-          wfBalances.get(mapping.wfAccountId) ?? null,
-        ),
+        accountResult: {
+          ...base,
+          imported,
+          skipped,
+          duplicates: 0,
+          balanceMismatch: compareBalances(
+            sfAccount.balance,
+            wfBalances.get(mapping.wfAccountId) ?? null,
+          ),
+        },
+        candidates: [],
       };
     }
 
@@ -135,28 +145,38 @@ async function syncOne(
       ? ((await fetchFullHistory(api, baseUrl, mapping.sfAccountId)) ?? sfAccount)
       : sfAccount;
 
-    const { result, watermark: next } = await syncCashAccount(api, mapping, syncSfAccount, watermark);
+    const { result, watermark: next, candidates } = await syncCashAccount(
+      api,
+      mapping,
+      syncSfAccount,
+      watermark,
+      wfAccountTypes.get(mapping.wfAccountId) ?? 'CASH',
+      paymentKeywords,
+    );
     await writeWatermark(api, mapping.sfAccountId, next);
 
     const plugImported = isFirstSync ? await pushOpeningBalance(api, mapping, syncSfAccount) : 0;
 
     return {
-      ...base,
-      imported: result.imported + plugImported,
-      skipped: result.skipped,
-      duplicates: result.duplicates,
-      // A first-sync account's balance was just brought into agreement by the
-      // plug above (or never disagreed); comparing against the pre-run
-      // snapshot in wfBalances would flag a stale, misleading mismatch.
-      balanceMismatch: isFirstSync
-        ? null
-        : compareBalances(sfAccount.balance, wfBalances.get(mapping.wfAccountId) ?? null),
+      accountResult: {
+        ...base,
+        imported: result.imported + plugImported,
+        skipped: result.skipped,
+        duplicates: result.duplicates,
+        // A first-sync account's balance was just brought into agreement by the
+        // plug above (or never disagreed); comparing against the pre-run
+        // snapshot in wfBalances would flag a stale, misleading mismatch.
+        balanceMismatch: isFirstSync
+          ? null
+          : compareBalances(sfAccount.balance, wfBalances.get(mapping.wfAccountId) ?? null),
+      },
+      candidates,
     };
   } catch (error) {
     // Per-institution isolation is a hard invariant: record and continue.
     const message = error instanceof Error ? error.message : String(error);
     api.logger.error(`[simplefin] account ${mapping.sfAccountName} failed: ${message}`);
-    return { ...base, error: message };
+    return { accountResult: { ...base, error: message }, candidates: [] };
   }
 }
 
@@ -198,9 +218,11 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   // Wealthfolio balances for the post-sync mismatch check. A failure here must
   // not fail the run — the check is diagnostic, so it degrades to "unavailable".
   const wfBalances = new Map<string, string>();
+  const wfAccountTypes = new Map<string, AccountType>();
   try {
     for (const account of await api.accounts.getAll()) {
       if (Number.isFinite(account.balance)) wfBalances.set(account.id, String(account.balance));
+      wfAccountTypes.set(account.id, account.accountType);
     }
   } catch (error) {
     api.logger.error(
@@ -211,10 +233,36 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   // Sequential on purpose: the host import APIs are shared state, and a serial
   // run keeps one slow institution from being blamed for another's timeout.
   const results: AccountRunResult[] = [];
+  const detectedCandidates: StagedCandidate[] = [];
   for (const mapping of config.mappings) {
-    results.push(
-      await syncOne(api, config.baseUrl, mapping, bySfId.get(mapping.sfAccountId), wfBalances),
+    const { accountResult, candidates } = await syncOne(
+      api,
+      config.baseUrl,
+      mapping,
+      bySfId.get(mapping.sfAccountId),
+      wfBalances,
+      wfAccountTypes,
+      config.paymentKeywords,
     );
+    results.push(accountResult);
+    detectedCandidates.push(...candidates);
+  }
+
+  const cashAccountIds = cashAccountIdsFrom(config.mappings, (id) => wfAccountTypes.get(id));
+  try {
+    const existingStaging = await readStaging(api);
+    const { candidates: remainingCandidates } = await runReconciliation(
+      api,
+      [...existingStaging, ...detectedCandidates],
+      cashAccountIds,
+      nowSeconds,
+    );
+    await writeStaging(api, remainingCandidates);
+  } catch (error) {
+    // Reconciliation is a secondary pass over transactions that already
+    // synced successfully — a failure here must not undo or block the run
+    // that already happened.
+    api.logger.error(`[simplefin] reconciliation pass failed: ${String(error)}`);
   }
 
   const run: SyncRun = {

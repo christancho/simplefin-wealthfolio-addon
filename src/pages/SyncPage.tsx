@@ -6,11 +6,12 @@ import { BridgeErrorBanner } from '../components/BridgeErrorBanner';
 import { HistoryList } from '../components/HistoryList';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { SetupCard } from '../components/SetupCard';
+import { StagedTransactionsList } from '../components/StagedTransactionsList';
 import { SyncSummary } from '../components/SyncSummary';
 import { fetchAccounts } from '../lib/simplefin/client';
 import type { SfAccount } from '../lib/simplefin/parse';
 import { bridgeDashboardUrl } from '../lib/simplefin/url';
-import { readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
+import { cashAccountIdsFrom, readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
 import { readHistory, type SyncRun } from '../lib/storage/history';
 import { runSync } from '../lib/sync/run';
 
@@ -99,6 +100,19 @@ export function SyncPage({ api }: SyncPageProps) {
     }
   }
 
+  async function persistPaymentKeywords(paymentKeywords: string[]) {
+    if (!config) return;
+    const previous = config;
+    const next = { ...config, paymentKeywords };
+    setConfig(next);
+    try {
+      await writeConfig(api, next);
+    } catch (err) {
+      setConfig(previous);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   if (!config) {
     return error ? (
       <Alert variant="destructive" role="alert">
@@ -132,6 +146,9 @@ export function SyncPage({ api }: SyncPageProps) {
             </TabsTrigger>
             <TabsTrigger value="runs" className="justify-start">
               Runs
+            </TabsTrigger>
+            <TabsTrigger value="staged" className="justify-start">
+              Staged
             </TabsTrigger>
             <TabsTrigger value="settings" className="justify-start">
               Settings
@@ -167,12 +184,24 @@ export function SyncPage({ api }: SyncPageProps) {
           <TabsContent value="runs" className="mt-0">
             <HistoryList runs={history} />
           </TabsContent>
+          <TabsContent value="staged" className="mt-0">
+            <StagedTransactionsList
+              key={lastRun?.finishedAt ?? 'initial'}
+              api={api}
+              cashAccountIds={cashAccountIdsFrom(
+                config.mappings,
+                (id) => wfAccounts.find((a) => a.id === id)?.accountType,
+              )}
+            />
+          </TabsContent>
           <TabsContent value="settings" className="mt-0">
             <SettingsPanel
               api={api}
               baseUrl={config.baseUrl}
               lookbackDays={config.lookbackDays}
               onLookbackDaysChange={persistLookbackDays}
+              paymentKeywords={config.paymentKeywords}
+              onPaymentKeywordsChange={persistPaymentKeywords}
               onDisconnected={loadConfig}
             />
           </TabsContent>

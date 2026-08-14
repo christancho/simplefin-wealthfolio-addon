@@ -30,6 +30,8 @@ export interface SettingsPanelProps {
   baseUrl: string;
   lookbackDays: number;
   onLookbackDaysChange: (days: number) => void;
+  paymentKeywords: string[];
+  onPaymentKeywordsChange: (keywords: string[]) => void;
   onDisconnected: () => void;
 }
 
@@ -38,16 +40,26 @@ function isValidLookback(value: string): boolean {
   return Number.isInteger(parsed) && parsed >= 1;
 }
 
+function parseKeywords(value: string): string[] {
+  return value
+    .split(',')
+    .map((k) => k.trim())
+    .filter((k) => k !== '');
+}
+
 export function SettingsPanel({
   api,
   baseUrl,
   lookbackDays,
   onLookbackDaysChange,
+  paymentKeywords,
+  onPaymentKeywordsChange,
   onDisconnected,
 }: SettingsPanelProps) {
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lookbackDraft, setLookbackDraft] = useState(String(lookbackDays));
+  const [keywordsDraft, setKeywordsDraft] = useState(paymentKeywords.join(', '));
 
   async function handleDisconnect() {
     setError(null);
@@ -64,6 +76,10 @@ export function SettingsPanel({
 
   function handleSaveLookback() {
     onLookbackDaysChange(Number(lookbackDraft));
+  }
+
+  function handleSaveKeywords() {
+    onPaymentKeywordsChange(parseKeywords(keywordsDraft));
   }
 
   return (
@@ -133,6 +149,34 @@ export function SettingsPanel({
                 }
               >
                 Save
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Payment detection</CardTitle>
+          <CardDescription>
+            A card credit whose payee or comment contains any of these (case-insensitive) is
+            staged as a possible bill payment for reconciliation into a transfer.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="payment-keywords">Payment keywords (comma-separated)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="payment-keywords"
+                className="w-full"
+                value={keywordsDraft}
+                onChange={(e) => setKeywordsDraft(e.target.value)}
+              />
+              <Button
+                onClick={handleSaveKeywords}
+                disabled={parseKeywords(keywordsDraft).join(',') === paymentKeywords.join(',')}
+              >
+                Save keywords
               </Button>
             </div>
           </div>

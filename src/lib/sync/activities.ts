@@ -1,10 +1,11 @@
-import type { ActivityImport, HostAPI } from '@wealthfolio/addon-sdk';
+import type { AccountType, ActivityImport, HostAPI } from '@wealthfolio/addon-sdk';
 import type { SfAccount, SfTransaction } from '../simplefin/parse';
 import type { AccountMapping } from '../storage/config';
+import type { StagedCandidate } from '../storage/staging';
 import { advanceWatermark, shouldPush, type Watermark } from '../storage/watermark';
 
 /** Epoch seconds -> YYYY-MM-DD in UTC, the form Wealthfolio's importer expects. */
-function isoDate(epochSeconds: number): string {
+export function isoDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
 }
 
@@ -17,13 +18,19 @@ export function toActivityImport(
   txn: SfTransaction,
   mapping: AccountMapping,
   currency: string,
+  destinationAccountType: AccountType,
 ): ActivityImport {
   const isOutflow = txn.amount.trim().startsWith('-');
   const magnitude = txn.amount.trim().replace(/^-/, '');
+  // The host rejects DEPOSIT outright on a CREDIT_CARD account
+  // ("DEPOSIT activities are not supported for credit card accounts",
+  // confirmed against a live host) — CREDIT is the type it accepts for
+  // money landing on a card.
+  const inflowType = destinationAccountType === 'CREDIT_CARD' ? 'CREDIT' : 'DEPOSIT';
 
   return {
     accountId: mapping.wfAccountId,
-    activityType: isOutflow ? 'WITHDRAWAL' : 'DEPOSIT',
+    activityType: isOutflow ? 'WITHDRAWAL' : inflowType,
     date: isoDate(txn.posted),
     amount: magnitude,
     currency,
@@ -38,6 +45,38 @@ export function toActivityImport(
   };
 }
 
+/** Case-insensitive substring match against the user's configured payment keywords. */
+export function isPaymentCandidate(text: string, keywords: string[]): boolean {
+  const upper = text.toUpperCase();
+  return keywords.some((keyword) => keyword.trim() !== '' && upper.includes(keyword.toUpperCase()));
+}
+
+/**
+ * A `CREDIT` transaction on a credit-card account whose payee/comment looks
+ * like a bill payment becomes a staged candidate for TRANSFER_IN/OUT
+ * reconciliation (see `./reconciliation.ts`). Returns null for anything that
+ * doesn't match — normal purchases and unrelated credits are left untouched.
+ */
+export function detectCandidate(
+  txn: SfTransaction,
+  mapping: AccountMapping,
+  paymentKeywords: string[],
+): StagedCandidate | null {
+  const text = txn.payee || txn.description;
+  if (!isPaymentCandidate(text, paymentKeywords)) return null;
+
+  return {
+    sfTransactionId: txn.id,
+    cardAccountId: mapping.wfAccountId,
+    cardActivityId: null,
+    amount: txn.amount.trim().replace(/^-/, ''),
+    postedDate: isoDate(txn.posted),
+    comment: text,
+    status: 'pending',
+    candidateWithdrawalIds: [],
+  };
+}
+
 export interface CashSyncCounts {
   imported: number;
   skipped: number;
@@ -49,16 +88,18 @@ export async function syncCashAccount(
   mapping: AccountMapping,
   sfAccount: SfAccount,
   watermark: Watermark,
-): Promise<{ result: CashSyncCounts; watermark: Watermark }> {
+  accountType: AccountType,
+  paymentKeywords: string[],
+): Promise<{ result: CashSyncCounts; watermark: Watermark; candidates: StagedCandidate[] }> {
   // Pending transactions are excluded from v1: their id and amount can both
   // change once posted, which would push a row we could never reconcile.
   const candidates = sfAccount.transactions.filter((t) => !t.pending && shouldPush(watermark, t));
 
   if (candidates.length === 0) {
-    return { result: { imported: 0, skipped: 0, duplicates: 0 }, watermark };
+    return { result: { imported: 0, skipped: 0, duplicates: 0 }, watermark, candidates: [] };
   }
 
-  const rows = candidates.map((t) => toActivityImport(t, mapping, sfAccount.currency));
+  const rows = candidates.map((t) => toActivityImport(t, mapping, sfAccount.currency, accountType));
   let checked;
   try {
     checked = await api.activities.checkImport(rows);
@@ -107,7 +148,7 @@ export async function syncCashAccount(
       watermark,
       candidates.filter((_, i) => checked[i].duplicateOfId),
     );
-    return { result: { imported: 0, skipped, duplicates }, watermark: advanced };
+    return { result: { imported: 0, skipped, duplicates }, watermark: advanced, candidates: [] };
   }
 
   let outcome;
@@ -125,10 +166,19 @@ export async function syncCashAccount(
     throw error;
   }
 
+  const stagedCandidates =
+    accountType === 'CREDIT_CARD'
+      ? importableTxns
+          .filter((t) => !t.amount.trim().startsWith('-'))
+          .map((t) => detectCandidate(t, mapping, paymentKeywords))
+          .filter((c): c is StagedCandidate => c !== null)
+      : [];
+
   return {
     result: { imported: outcome.summary.imported, skipped, duplicates },
     // Only advance over what was actually accepted — if the import throws, this
     // line is never reached and the watermark stays put, so the next run retries.
     watermark: advanceWatermark(watermark, importableTxns),
+    candidates: stagedCandidates,
   };
 }
