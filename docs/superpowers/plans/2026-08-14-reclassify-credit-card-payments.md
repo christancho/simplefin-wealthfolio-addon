@@ -2385,6 +2385,19 @@ git commit -m "feat: add Staged Transactions list with dismiss and ambiguous-res
 - Consumes: `StagedTransactionsList` from `../components/StagedTransactionsList`.
 - Produces: no new exports — `SyncPage` gains a "Staged" tab.
 
+> **Amendment (ruling from Task 7's review, see ledger):** `StagedTransactionsList`
+> loads its staging data once, in a `useEffect` that runs on mount only. Radix
+> `Tabs` keeps every `TabsContent` mounted across tab switches (it doesn't
+> unmount/remount on activation), so without help this component would show
+> stale data after a completed "Sync now" run if the user is already on, or
+> returns to, the Staged tab. Fix: pass `key={lastRun?.finishedAt ?? 'initial'}`
+> on the `<StagedTransactionsList>` element below — `lastRun` is
+> `SyncPage`'s existing state (already set after every successful `runSync()`
+> call, see `handleSync`), and `finishedAt` changes on every run, so React
+> remounts the component (re-running its data-loading `useEffect`) each time
+> a sync completes. This needs its own test, added below alongside the
+> brief's original test.
+
 - [ ] **Step 1: Write the failing test**
 
 Add to `src/pages/SyncPage.sync.test.tsx`:
@@ -2424,6 +2437,47 @@ Add to `src/pages/SyncPage.sync.test.tsx`:
 
     expect(await screen.findByText('Online Payment Thank You')).toBeInTheDocument();
   });
+
+  it('refreshes the Staged tab after a completed sync, since it stays mounted across tab switches', async () => {
+    const host = createMockHost();
+    seedConfig(host, [CHECKING_MAPPING]);
+    host.respond(/\/accounts/, {
+      body: JSON.stringify({
+        accounts: [
+          { id: 'ACT-1', name: 'Checking', currency: 'USD', balance: '100.00', 'balance-date': 1700000000, org: { name: 'Bank A' }, transactions: [] },
+        ],
+        errors: [],
+      }),
+    });
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', name: 'My Checking', balance: 100 }] as never);
+
+    render(<SyncPage api={host.api} />);
+    await screen.findByText('Checking');
+    await userEvent.click(await screen.findByRole('tab', { name: /staged/i }));
+    expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
+
+    // A sync runs and, elsewhere, resolves a candidate into staging — the
+    // tab is already mounted (and was already visited), so only a remount
+    // triggered by the completed run's changed `finishedAt` will pick it up.
+    await host.api.storage.set(
+      'simplefin.staging',
+      JSON.stringify([
+        {
+          sfTransactionId: 'TXN-2',
+          cardAccountId: 'WF-CARD',
+          cardActivityId: null,
+          amount: '25.00',
+          postedDate: '2026-08-02',
+          comment: 'Autopay',
+          status: 'pending',
+          candidateWithdrawalIds: [],
+        },
+      ]),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /sync now/i }));
+
+    expect(await screen.findByText('Autopay')).toBeInTheDocument();
+  });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2453,11 +2507,16 @@ current config:
 ```tsx
           <TabsContent value="staged" className="mt-0">
             <StagedTransactionsList
+              key={lastRun?.finishedAt ?? 'initial'}
               api={api}
               cashAccountIds={config.mappings.filter((m) => m.mode === 'CASH').map((m) => m.wfAccountId)}
             />
           </TabsContent>
 ```
+
+`lastRun` is already `SyncPage`'s own state (declared near the top of the
+component, set in `handleSync` after every successful `runSync()` call) —
+no new state is introduced here.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
