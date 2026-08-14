@@ -19,15 +19,25 @@ export interface SyncConfig {
   mappings: AccountMapping[];
   /** Floor on how far back a sync ever asks the Bridge for, in days. */
   lookbackDays: number;
+  /** Case-insensitive substrings checked against a card credit's payee/comment to detect a bill payment. */
+  paymentKeywords: string[];
 }
 
 /** One statement cycle — enough to seed a new account without an unbounded first pull. */
 export const DEFAULT_LOOKBACK_DAYS = 30;
 
+/** Common bill-payment phrasing across US/Canadian card issuers. */
+export const DEFAULT_PAYMENT_KEYWORDS = ['PAYMENT', 'AUTOPAY', 'THANK YOU'];
+
 const CONFIG_KEY = storageKey('config');
 
 export function emptyConfig(): SyncConfig {
-  return { baseUrl: null, mappings: [], lookbackDays: DEFAULT_LOOKBACK_DAYS };
+  return {
+    baseUrl: null,
+    mappings: [],
+    lookbackDays: DEFAULT_LOOKBACK_DAYS,
+    paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
+  };
 }
 
 export async function readConfig(api: HostAPI): Promise<SyncConfig> {

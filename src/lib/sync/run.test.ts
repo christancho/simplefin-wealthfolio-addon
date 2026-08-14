@@ -24,6 +24,7 @@ const config: SyncConfig = {
     },
   ],
   lookbackDays: 30,
+  paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
 };
 
 const bridgePayload = {
@@ -203,6 +204,7 @@ describe('runSync opening-balance backfill', () => {
       },
     ],
     lookbackDays: 30,
+    paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
   };
 
   /** A Wealthfolio account whose balance actually moves as activities are pushed. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createMockHost } from '../../test/mockHost';
-import { DEFAULT_LOOKBACK_DAYS, readConfig, writeConfig } from './config';
+import { DEFAULT_LOOKBACK_DAYS, DEFAULT_PAYMENT_KEYWORDS, readConfig, writeConfig } from './config';
 
 describe('config', () => {
   it('returns an empty config when nothing is stored', async () => {
@@ -9,6 +9,7 @@ describe('config', () => {
       baseUrl: null,
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
+      paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
     });
   });
 
@@ -26,12 +27,13 @@ describe('config', () => {
         },
       ],
       lookbackDays: 60,
+      paymentKeywords: ['PAYMENT', 'AUTOPAY'],
     };
     await writeConfig(host.api, config);
     expect(await readConfig(host.api)).toEqual(config);
   });
 
-  it('defaults lookbackDays for a config written before the field existed', async () => {
+  it('defaults lookbackDays and paymentKeywords for a config written before those fields existed', async () => {
     const host = createMockHost();
     await host.api.storage.set(
       'simplefin.config',
@@ -41,6 +43,7 @@ describe('config', () => {
       baseUrl: 'https://bridge.simplefin.org/simplefin',
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
+      paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
     });
   });
 
@@ -50,6 +53,7 @@ describe('config', () => {
       baseUrl: 'https://bridge.simplefin.org/simplefin',
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
+      paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
     });
     const stored = [...host.storage.values()].join('');
     expect(stored).not.toContain('@');
@@ -62,6 +66,7 @@ describe('config', () => {
       baseUrl: null,
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
+      paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
     });
     expect(host.api.logger.error).toHaveBeenCalled();
   });
