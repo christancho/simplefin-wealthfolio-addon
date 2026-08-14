@@ -105,14 +105,23 @@ read it in one call rather than per-account:
 
 ```ts
 interface StagedCandidate {
+  sfTransactionId: string;    // identity: the SimpleFIN transaction id of the card-side CREDIT
   cardAccountId: string;      // Wealthfolio account id
-  activityId: string;         // real id, from search() after import — never from import()'s response
+  cardActivityId: string | null; // real id — null until a reconciliation pass resolves it via search()
   amount: string;
-  postedDate: string;         // ISO date
+  postedDate: string;         // ISO date, the card CREDIT's date
+  comment: string;
   status: 'pending' | 'ambiguous';
   candidateWithdrawalIds: string[]; // populated once status is 'ambiguous'
 }
 ```
+
+`cardActivityId` starts `null`: detection happens inline during `syncCashAccount`,
+before the import has necessarily even settled into a searchable state, and
+`import()`'s response can't be trusted for the real id (see above). The
+reconciliation pass resolves it via `search()` on its first attempt (matching
+by `accountId`/`amount`/`postedDate`/`comment`) and caches it on the record so
+later passes don't re-search for it.
 
 This persists across sync runs: the matching withdrawal can already be
 imported *before* the card payment is even detected, since the cash debit
@@ -137,6 +146,18 @@ date, and exact amount match.
 - **1 match** → auto-resolve (see below). Drop from staging.
 - **2+ matches** → marked `ambiguous`, all candidate ids kept for manual
   resolution — never auto-pick a "closest" match with real money.
+
+Amount comparison reuses `normalise()` from `src/lib/sync/balance.ts` (exported
+for this purpose) rather than raw string equality or float parsing: the
+probe's live data showed Wealthfolio normalizes persisted amounts (`"40"`,
+`"1060.5"`) rather than preserving the two-decimal form SimpleFIN sends
+(`"40.00"`), so a raw string comparison between a freshly-detected candidate
+and a `search()` result would false-negative on exactly-matching amounts.
+`normalise()` already solves this without going through float, consistent
+with this codebase's existing money-handling convention. This only needs
+`manifest.json`'s `activities` permission to declare `search` and `update`
+(not `getAll` or `saveMany` — nothing in this design calls the whole-account
+listing or bulk-delete endpoints).
 
 ### 6. Reclassification
 
