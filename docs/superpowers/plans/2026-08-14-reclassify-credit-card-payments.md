@@ -53,10 +53,21 @@
 
 **Files:**
 - Modify: `src/lib/storage/config.ts`
+- Modify: `src/lib/sync/run.test.ts` (two pre-existing typed `SyncConfig` fixtures need the new required field — see Step 3b)
 - Test: `src/lib/storage/config.test.ts`
 
 **Interfaces:**
 - Produces: `SyncConfig.paymentKeywords: string[]`; `DEFAULT_PAYMENT_KEYWORDS: readonly string[]` exported from `src/lib/storage/config.ts`.
+
+**Pre-flight note:** `paymentKeywords` is a *required* field on `SyncConfig`.
+Two typed `SyncConfig` object literals already exist outside `config.ts` —
+`src/lib/sync/run.test.ts`'s top-level `config` (used by `okHost()` and most
+`describe('runSync', ...)` tests) and its `backfillConfig` (used by
+`describe('runSync opening-balance backfill', ...)`) — and neither is
+otherwise touched by this task's own tests. Without Step 3b below, this
+task would leave `pnpm type-check` broken for every later task to trip
+over. This is confirmed via `grep -rn "SyncConfig\s*=\s*{" src/` — those are
+the only two typed literals in the codebase besides `config.ts` itself.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -184,15 +195,25 @@ export function emptyConfig(): SyncConfig {
 backfills `paymentKeywords` for configs written before this field existed —
 no change needed there.
 
+- [ ] **Step 3b: Fix the two pre-existing typed `SyncConfig` fixtures**
+
+In `src/lib/sync/run.test.ts`, add `paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU']`
+to both the top-level `config` object (used by `okHost()` and the main
+`describe('runSync', ...)` tests) and to `backfillConfig` inside
+`describe('runSync opening-balance backfill', ...)`. Neither test in that
+file asserts on `paymentKeywords` — this step exists purely so the file
+still type-checks, not to add new behavior.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pnpm test -- config.test.ts`
-Expected: PASS
+Run: `pnpm type-check && pnpm test -- config.test.ts run.test.ts`
+Expected: PASS — the `type-check` here specifically confirms Step 3b closed
+the gap; a green `config.test.ts` alone would not have caught it.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/lib/storage/config.ts src/lib/storage/config.test.ts
+git add src/lib/storage/config.ts src/lib/storage/config.test.ts src/lib/sync/run.test.ts
 git commit -m "feat: add configurable payment keywords to SyncConfig"
 ```
 
