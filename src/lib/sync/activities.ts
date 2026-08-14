@@ -1,6 +1,7 @@
 import type { AccountType, ActivityImport, HostAPI } from '@wealthfolio/addon-sdk';
 import type { SfAccount, SfTransaction } from '../simplefin/parse';
 import type { AccountMapping } from '../storage/config';
+import type { StagedCandidate } from '../storage/staging';
 import { advanceWatermark, shouldPush, type Watermark } from '../storage/watermark';
 
 /** Epoch seconds -> YYYY-MM-DD in UTC, the form Wealthfolio's importer expects. */
@@ -44,6 +45,38 @@ export function toActivityImport(
   };
 }
 
+/** Case-insensitive substring match against the user's configured payment keywords. */
+export function isPaymentCandidate(text: string, keywords: string[]): boolean {
+  const upper = text.toUpperCase();
+  return keywords.some((keyword) => keyword.trim() !== '' && upper.includes(keyword.toUpperCase()));
+}
+
+/**
+ * A `CREDIT` transaction on a credit-card account whose payee/comment looks
+ * like a bill payment becomes a staged candidate for TRANSFER_IN/OUT
+ * reconciliation (see `./reconciliation.ts`). Returns null for anything that
+ * doesn't match — normal purchases and unrelated credits are left untouched.
+ */
+export function detectCandidate(
+  txn: SfTransaction,
+  mapping: AccountMapping,
+  paymentKeywords: string[],
+): StagedCandidate | null {
+  const text = txn.payee || txn.description;
+  if (!isPaymentCandidate(text, paymentKeywords)) return null;
+
+  return {
+    sfTransactionId: txn.id,
+    cardAccountId: mapping.wfAccountId,
+    cardActivityId: null,
+    amount: txn.amount.trim().replace(/^-/, ''),
+    postedDate: isoDate(txn.posted),
+    comment: text,
+    status: 'pending',
+    candidateWithdrawalIds: [],
+  };
+}
+
 export interface CashSyncCounts {
   imported: number;
   skipped: number;
@@ -57,7 +90,7 @@ export async function syncCashAccount(
   watermark: Watermark,
   accountType: AccountType,
   paymentKeywords: string[],
-): Promise<{ result: CashSyncCounts; watermark: Watermark; candidates: never[] }> {
+): Promise<{ result: CashSyncCounts; watermark: Watermark; candidates: StagedCandidate[] }> {
   // Pending transactions are excluded from v1: their id and amount can both
   // change once posted, which would push a row we could never reconcile.
   const candidates = sfAccount.transactions.filter((t) => !t.pending && shouldPush(watermark, t));
@@ -133,11 +166,19 @@ export async function syncCashAccount(
     throw error;
   }
 
+  const stagedCandidates =
+    accountType === 'CREDIT_CARD'
+      ? importableTxns
+          .filter((t) => !t.amount.trim().startsWith('-'))
+          .map((t) => detectCandidate(t, mapping, paymentKeywords))
+          .filter((c): c is StagedCandidate => c !== null)
+      : [];
+
   return {
     result: { imported: outcome.summary.imported, skipped, duplicates },
     // Only advance over what was actually accepted — if the import throws, this
     // line is never reached and the watermark stays put, so the next run retries.
     watermark: advanceWatermark(watermark, importableTxns),
-    candidates: [],
+    candidates: stagedCandidates,
   };
 }

@@ -3,6 +3,7 @@ import { fetchAccounts } from '../simplefin/client';
 import type { SfAccount } from '../simplefin/parse';
 import type { AccountMapping, SyncConfig } from '../storage/config';
 import { appendRun, type AccountRunResult, type SyncRun } from '../storage/history';
+import type { StagedCandidate } from '../storage/staging';
 import { readWatermark, writeWatermark } from '../storage/watermark';
 import { syncCashAccount } from './activities';
 import { compareBalances } from './balance';
@@ -88,7 +89,8 @@ async function syncOne(
   sfAccount: SfAccount | undefined,
   wfBalances: Map<string, string>,
   wfAccountTypes: Map<string, AccountType>,
-): Promise<AccountRunResult> {
+  paymentKeywords: string[],
+): Promise<{ accountResult: AccountRunResult; candidates: StagedCandidate[] }> {
   const base: AccountRunResult = {
     sfAccountId: mapping.sfAccountId,
     sfAccountName: mapping.sfAccountName,
@@ -104,10 +106,13 @@ async function syncOne(
 
   if (!sfAccount) {
     return {
-      ...base,
-      error:
-        `SimpleFIN account ${mapping.sfAccountId} was not returned by the Bridge. ` +
-        'It may have been disconnected — re-check the mapping.',
+      accountResult: {
+        ...base,
+        error:
+          `SimpleFIN account ${mapping.sfAccountId} was not returned by the Bridge. ` +
+          'It may have been disconnected — re-check the mapping.',
+      },
+      candidates: [],
     };
   }
 
@@ -115,14 +120,17 @@ async function syncOne(
     if (mapping.mode === 'HOLDINGS') {
       const { imported, skipped } = await syncHoldingsAccount(api, mapping, sfAccount);
       return {
-        ...base,
-        imported,
-        skipped,
-        duplicates: 0,
-        balanceMismatch: compareBalances(
-          sfAccount.balance,
-          wfBalances.get(mapping.wfAccountId) ?? null,
-        ),
+        accountResult: {
+          ...base,
+          imported,
+          skipped,
+          duplicates: 0,
+          balanceMismatch: compareBalances(
+            sfAccount.balance,
+            wfBalances.get(mapping.wfAccountId) ?? null,
+          ),
+        },
+        candidates: [],
       };
     }
 
@@ -136,35 +144,38 @@ async function syncOne(
       ? ((await fetchFullHistory(api, baseUrl, mapping.sfAccountId)) ?? sfAccount)
       : sfAccount;
 
-    const { result, watermark: next } = await syncCashAccount(
+    const { result, watermark: next, candidates } = await syncCashAccount(
       api,
       mapping,
       syncSfAccount,
       watermark,
       wfAccountTypes.get(mapping.wfAccountId) ?? 'CASH',
-      [],
+      paymentKeywords,
     );
     await writeWatermark(api, mapping.sfAccountId, next);
 
     const plugImported = isFirstSync ? await pushOpeningBalance(api, mapping, syncSfAccount) : 0;
 
     return {
-      ...base,
-      imported: result.imported + plugImported,
-      skipped: result.skipped,
-      duplicates: result.duplicates,
-      // A first-sync account's balance was just brought into agreement by the
-      // plug above (or never disagreed); comparing against the pre-run
-      // snapshot in wfBalances would flag a stale, misleading mismatch.
-      balanceMismatch: isFirstSync
-        ? null
-        : compareBalances(sfAccount.balance, wfBalances.get(mapping.wfAccountId) ?? null),
+      accountResult: {
+        ...base,
+        imported: result.imported + plugImported,
+        skipped: result.skipped,
+        duplicates: result.duplicates,
+        // A first-sync account's balance was just brought into agreement by the
+        // plug above (or never disagreed); comparing against the pre-run
+        // snapshot in wfBalances would flag a stale, misleading mismatch.
+        balanceMismatch: isFirstSync
+          ? null
+          : compareBalances(sfAccount.balance, wfBalances.get(mapping.wfAccountId) ?? null),
+      },
+      candidates,
     };
   } catch (error) {
     // Per-institution isolation is a hard invariant: record and continue.
     const message = error instanceof Error ? error.message : String(error);
     api.logger.error(`[simplefin] account ${mapping.sfAccountName} failed: ${message}`);
-    return { ...base, error: message };
+    return { accountResult: { ...base, error: message }, candidates: [] };
   }
 }
 
@@ -221,10 +232,26 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   // Sequential on purpose: the host import APIs are shared state, and a serial
   // run keeps one slow institution from being blamed for another's timeout.
   const results: AccountRunResult[] = [];
+  const detectedCandidates: StagedCandidate[] = [];
   for (const mapping of config.mappings) {
-    results.push(
-      await syncOne(api, config.baseUrl, mapping, bySfId.get(mapping.sfAccountId), wfBalances, wfAccountTypes),
+    const { accountResult, candidates } = await syncOne(
+      api,
+      config.baseUrl,
+      mapping,
+      bySfId.get(mapping.sfAccountId),
+      wfBalances,
+      wfAccountTypes,
+      config.paymentKeywords,
     );
+    results.push(accountResult);
+    detectedCandidates.push(...candidates);
+  }
+
+  // Not yet persisted or reconciled — Task 6 wires this into staging.ts and
+  // the reconciliation pass. This line exists solely so the variable above
+  // isn't flagged as unused past the loop.
+  if (detectedCandidates.length > 0) {
+    api.logger.debug(`[simplefin] detected ${detectedCandidates.length} payment candidate(s) this run`);
   }
 
   const run: SyncRun = {

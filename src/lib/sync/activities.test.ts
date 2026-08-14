@@ -3,7 +3,7 @@ import type { ActivityImport } from '@wealthfolio/addon-sdk';
 import { createMockHost } from '../../test/mockHost';
 import type { AccountMapping } from '../storage/config';
 import { emptyWatermark } from '../storage/watermark';
-import { syncCashAccount, toActivityImport } from './activities';
+import { detectCandidate, isPaymentCandidate, syncCashAccount, toActivityImport } from './activities';
 
 const mapping: AccountMapping = {
   sfAccountId: 'ACT-1',
@@ -71,6 +71,45 @@ describe('toActivityImport', () => {
   it('sets symbol to an empty string, since the host rejects the whole batch if it is absent', () => {
     const activity = toActivityImport(txn() as never, mapping, 'USD', 'CASH');
     expect(activity.symbol).toBe('');
+  });
+});
+
+describe('isPaymentCandidate', () => {
+  it('matches case-insensitively against any configured keyword', () => {
+    expect(isPaymentCandidate('ONLINE PAYMENT - THANK YOU', ['payment'])).toBe(true);
+    expect(isPaymentCandidate('autopay from checking', ['AUTOPAY'])).toBe(true);
+  });
+
+  it('does not match an unrelated merchant credit', () => {
+    expect(isPaymentCandidate('Amazon Refund', ['PAYMENT', 'AUTOPAY', 'THANK YOU'])).toBe(false);
+  });
+
+  it('ignores blank keywords rather than matching everything', () => {
+    expect(isPaymentCandidate('Amazon Refund', ['', '  '])).toBe(false);
+  });
+});
+
+describe('detectCandidate', () => {
+  it('stages a keyword-matched transaction with cardActivityId unresolved', () => {
+    const candidate = detectCandidate(
+      txn({ id: 'TXN-9', amount: '75.00', payee: 'Online Payment Thank You', posted: 1754438400 }) as never,
+      mapping,
+      ['PAYMENT'],
+    );
+    expect(candidate).toEqual({
+      sfTransactionId: 'TXN-9',
+      cardAccountId: 'WF-1',
+      cardActivityId: null,
+      amount: '75.00',
+      postedDate: '2025-08-06',
+      comment: 'Online Payment Thank You',
+      status: 'pending',
+      candidateWithdrawalIds: [],
+    });
+  });
+
+  it('returns null for a transaction that does not match any keyword', () => {
+    expect(detectCandidate(txn({ payee: 'Amazon Refund' }) as never, mapping, ['PAYMENT'])).toBeNull();
   });
 });
 
@@ -248,5 +287,67 @@ describe('syncCashAccount', () => {
     );
 
     expect(importedRows[0].activityType).toBe('CREDIT');
+  });
+
+  it('stages a keyword-matched inflow on a credit-card account as a candidate', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) => a.map((row) => ({ ...row, isValid: true })));
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R1',
+      summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+    }));
+
+    const { candidates } = await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn({ amount: '75.00', payee: 'Online Payment Thank You' })]) as never,
+      emptyWatermark(),
+      'CREDIT_CARD',
+      ['PAYMENT'],
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].sfTransactionId).toBe('TXN-1');
+  });
+
+  it('does not stage a non-matching inflow, an outflow, or any transaction on a non-credit-card account', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) => a.map((row) => ({ ...row, isValid: true })));
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R1',
+      summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+    }));
+
+    const nonMatching = await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn({ amount: '75.00', payee: 'Amazon Refund' })]) as never,
+      emptyWatermark(),
+      'CREDIT_CARD',
+      ['PAYMENT'],
+    );
+    expect(nonMatching.candidates).toEqual([]);
+
+    const outflow = await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn({ amount: '-75.00', payee: 'Payment Center' })]) as never,
+      emptyWatermark(),
+      'CREDIT_CARD',
+      ['PAYMENT'],
+    );
+    expect(outflow.candidates).toEqual([]);
+
+    const nonCard = await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn({ amount: '75.00', payee: 'Online Payment Thank You' })]) as never,
+      emptyWatermark(),
+      'CASH',
+      ['PAYMENT'],
+    );
+    expect(nonCard.candidates).toEqual([]);
   });
 });

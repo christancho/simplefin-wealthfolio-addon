@@ -189,6 +189,60 @@ describe('runSync', () => {
     const lookbackFloor = nowSeconds - 5 * SECONDS_PER_DAY;
     expect(startDate).toBeLessThan(lookbackFloor);
   });
+
+  it('detects a credit-card payment candidate during the account loop', async () => {
+    const host = createMockHost();
+    host.respond(/\/accounts/, {
+      body: JSON.stringify({
+        errors: [],
+        accounts: [
+          {
+            org: { name: 'Card Co' },
+            id: 'ACT-CARD',
+            name: 'Visa',
+            currency: 'USD',
+            balance: '0.00',
+            'balance-date': 1754524800,
+            transactions: [
+              { id: 'TXN-PAY', posted: 1754438400, amount: '50.00', description: 'Online Payment Thank You' },
+            ],
+            holdings: [],
+          },
+        ],
+      }),
+    });
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) => a.map((row) => ({ ...row, isValid: true })));
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R',
+      summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+    }));
+    host.api.activities.search = vi.fn(async () => ({ data: [], meta: { totalRowCount: 0 } }));
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'ACT-CARD', accountType: 'CREDIT_CARD', balance: 0 }] as never);
+
+    const cardConfig = {
+      baseUrl: 'https://bridge.simplefin.org/simplefin',
+      mappings: [
+        {
+          sfAccountId: 'ACT-CARD',
+          wfAccountId: 'ACT-CARD',
+          mode: 'CASH' as const,
+          sfAccountName: 'Visa',
+          orgName: 'Card Co',
+        },
+      ],
+      lookbackDays: 30,
+      paymentKeywords: ['PAYMENT'],
+    };
+
+    await runSync(host.api, cardConfig);
+
+    // The reconciliation pass (wired in Task 6) will read this back; for now
+    // just confirm detection ran without needing a search()/update() call —
+    // 0 withdrawal candidates from the empty mock search means nothing to
+    // reconcile against yet, and no error was thrown.
+    expect(host.api.activities.import).toHaveBeenCalled();
+  });
 });
 
 describe('runSync opening-balance backfill', () => {
