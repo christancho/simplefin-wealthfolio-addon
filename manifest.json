@@ -66,7 +66,8 @@
         { "name": "checkImport", "isDeclared": true, "isDetected": false },
         { "name": "import", "isDeclared": true, "isDetected": false },
         { "name": "search", "isDeclared": true, "isDetected": false },
-        { "name": "update", "isDeclared": true, "isDetected": false }
+        { "name": "update", "isDeclared": true, "isDetected": false },
+        { "name": "saveMany", "isDeclared": true, "isDetected": false }
       ],
       "purpose": "Import cash transactions fetched from SimpleFIN, and reconcile credit-card payments into linked transfers."
     },

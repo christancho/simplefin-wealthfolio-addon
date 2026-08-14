@@ -122,10 +122,19 @@ function toUpdate(row: ActivityDetails, activityType: string): ActivityUpdate {
  * host that `activities.update()` doesn't persist it, so there is no
  * host-side visual pairing available; the two legs are linked only by the
  * staging record until it's dropped.
+ *
+ * Both legs are sent in a single `saveMany()` call rather than two
+ * sequential `update()` calls: `findCardActivity()` only ever searches
+ * `activityTypes: 'CREDIT'`, so if the card leg alone were reclassified to
+ * `TRANSFER_IN` and the withdrawal leg's write then failed, the next
+ * reconciliation attempt could never re-find the (now non-CREDIT) card
+ * activity — leaving the pair permanently half-reclassified. One request,
+ * one failure path avoids that split-write state.
  */
 async function reclassifyPair(api: HostAPI, cardRow: ActivityDetails, withdrawalRow: ActivityDetails): Promise<void> {
-  await api.activities.update(toUpdate(cardRow, 'TRANSFER_IN'));
-  await api.activities.update(toUpdate(withdrawalRow, 'TRANSFER_OUT'));
+  await api.activities.saveMany({
+    updates: [toUpdate(cardRow, 'TRANSFER_IN'), toUpdate(withdrawalRow, 'TRANSFER_OUT')],
+  });
 }
 
 export interface ReconciliationSummary {

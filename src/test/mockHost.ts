@@ -42,6 +42,13 @@ export function createMockHost(): MockHost {
       import: vi.fn(),
       search: vi.fn(async () => ({ data: [], meta: { totalRowCount: 0 } })),
       update: vi.fn(async (activity: unknown) => activity),
+      saveMany: vi.fn(async (req: { updates?: unknown[] }) => ({
+        created: [],
+        updated: req.updates ?? [],
+        deleted: [],
+        createdMappings: [],
+        errors: [],
+      })),
     },
     snapshots: { checkImport: vi.fn(), importSnapshots: vi.fn() },
     portfolio: { recalculate: vi.fn(async () => {}) },

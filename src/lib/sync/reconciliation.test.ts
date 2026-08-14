@@ -50,18 +50,17 @@ describe('runReconciliation', () => {
       if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
       return { data: [withdrawalActivity()], meta: { totalRowCount: 1 } };
     }) as never;
-    host.api.activities.update = vi.fn(async (u) => u as never);
 
     const { candidates, summary } = await runReconciliation(host.api, [candidate()], ['WF-CASH'], NOW);
 
     expect(candidates).toHaveLength(0);
     expect(summary.resolved).toBe(1);
-    expect(host.api.activities.update).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
-    );
-    expect(host.api.activities.update).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
-    );
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
   });
 
   it('stays pending with zero withdrawal matches', async () => {
@@ -77,7 +76,7 @@ describe('runReconciliation', () => {
     expect(candidates[0].status).toBe('pending');
     expect(candidates[0].cardActivityId).toBe('CARD-ACT-1');
     expect(summary.resolved).toBe(0);
-    expect(host.api.activities.update).not.toHaveBeenCalled();
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
   });
 
   it('marks ambiguous with two or more withdrawal matches, never auto-picking one', async () => {
@@ -94,7 +93,7 @@ describe('runReconciliation', () => {
 
     expect(candidates[0].status).toBe('ambiguous');
     expect(candidates[0].candidateWithdrawalIds.sort()).toEqual(['CASH-ACT-1', 'CASH-ACT-2']);
-    expect(host.api.activities.update).not.toHaveBeenCalled();
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
   });
 
   it('excludes a withdrawal outside the 3-day match window', async () => {
@@ -120,7 +119,6 @@ describe('runReconciliation', () => {
       // Wealthfolio's persisted form ("50") differs from the candidate's stored form ("50.00").
       return { data: [withdrawalActivity({ amount: '50' })], meta: { totalRowCount: 1 } };
     }) as never;
-    host.api.activities.update = vi.fn(async (u) => u as never);
 
     const { summary } = await runReconciliation(host.api, [candidate({ amount: '50.00' })], ['WF-CASH'], NOW);
     expect(summary.resolved).toBe(1);
@@ -145,7 +143,6 @@ describe('runReconciliation', () => {
       if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
       return { data: [withdrawalActivity()], meta: { totalRowCount: 1 } };
     }) as never;
-    host.api.activities.update = vi.fn(async (u) => u as never);
 
     const bad = candidate({ sfTransactionId: 'TXN-BAD', cardAccountId: 'WF-CARD-BAD' });
     const good = candidate({ sfTransactionId: 'TXN-GOOD' });
@@ -215,7 +212,6 @@ describe('resolveAmbiguous', () => {
       if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
       return { data: [withdrawalActivity(), withdrawalActivity({ id: 'OTHER' })], meta: { totalRowCount: 2 } };
     }) as never;
-    host.api.activities.update = vi.fn(async (u) => u as never);
 
     await resolveAmbiguous(
       host.api,
@@ -224,8 +220,12 @@ describe('resolveAmbiguous', () => {
       'CASH-ACT-1',
     );
 
-    expect(host.api.activities.update).toHaveBeenCalledWith(expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }));
-    expect(host.api.activities.update).toHaveBeenCalledWith(expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }));
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
   });
 
   it('throws if the chosen withdrawal can no longer be found', async () => {
