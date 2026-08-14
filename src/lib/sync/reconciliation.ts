@@ -187,8 +187,18 @@ export async function runReconciliation(
 
   // The withdrawal pool searched is identical for every candidate in this
   // run (same cashAccountIds) — fetch it once rather than once per
-  // candidate, skipping the call entirely when nothing is left to check.
-  const withdrawals = active.length > 0 ? await searchAllByType(api, cashAccountIds, 'WITHDRAWAL') : [];
+  // candidate, skipping the call entirely when nothing is left to check or
+  // when there's no cash account to search (an empty accountIds filter is
+  // not safe to send — the host may treat it as "no filter", pulling in
+  // every WITHDRAWAL in the portfolio).
+  const withdrawals =
+    active.length > 0 && cashAccountIds.length > 0 ? await searchAllByType(api, cashAccountIds, 'WITHDRAWAL') : [];
+
+  // Withdrawals already claimed by an earlier candidate's unique match in
+  // this same run — excluded from subsequent candidates' pools so two
+  // same-amount, overlapping-window candidates can't both reclassify the
+  // same real withdrawal.
+  const claimedWithdrawalIds = new Set<string>();
 
   for (const candidate of active) {
     try {
@@ -200,7 +210,7 @@ export async function runReconciliation(
         continue;
       }
 
-      const matches = withdrawalMatches(withdrawals, candidate);
+      const matches = withdrawalMatches(withdrawals, candidate).filter((w) => !claimedWithdrawalIds.has(w.id));
 
       if (matches.length === 0) {
         remaining.push({ ...candidate, cardActivityId: cardRow.id, status: 'pending', candidateWithdrawalIds: [] });
@@ -217,6 +227,7 @@ export async function runReconciliation(
       }
 
       await reclassifyPair(api, cardRow, matches[0], candidate.sfTransactionId);
+      claimedWithdrawalIds.add(matches[0].id);
       resolved += 1;
     } catch (error) {
       api.logger.error(

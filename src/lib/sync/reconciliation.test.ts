@@ -196,6 +196,48 @@ describe('runReconciliation', () => {
     expect(withdrawalSearchCalls).toBe(1);
   });
 
+  it('does not let a second same-amount candidate double-claim a withdrawal already claimed this run', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') {
+        return { data: [cardActivity(), cardActivity({ id: 'CARD-ACT-2' })], meta: { totalRowCount: 2 } };
+      }
+      // Only one real withdrawal exists to match against both candidates.
+      return { data: [withdrawalActivity()], meta: { totalRowCount: 1 } };
+    }) as never;
+
+    const first = candidate({ sfTransactionId: 'TXN-1', cardActivityId: 'CARD-ACT-1' });
+    const second = candidate({ sfTransactionId: 'TXN-2', cardActivityId: 'CARD-ACT-2' });
+
+    const { candidates, summary } = await runReconciliation(host.api, [first, second], ['WF-CASH'], NOW);
+
+    expect(summary.resolved).toBe(1);
+    expect(host.api.activities.saveMany).toHaveBeenCalledTimes(1);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].sfTransactionId).toBe('TXN-2');
+    expect(candidates[0].status).toBe('pending');
+  });
+
+  it('skips the withdrawal search and leaves candidates pending when cashAccountIds is empty', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
+      throw new Error('should never search for WITHDRAWAL when cashAccountIds is empty');
+    }) as never;
+
+    const { candidates, summary } = await runReconciliation(host.api, [candidate()], [], NOW);
+
+    expect(host.api.activities.search).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ activityTypes: 'WITHDRAWAL' }),
+      expect.anything(),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].status).toBe('pending');
+    expect(summary.resolved).toBe(0);
+  });
+
   it('paginates search() from page 0 until totalRowCount is covered', async () => {
     const host = createMockHost();
     const manyWithdrawals = Array.from({ length: 3 }, (_, i) => withdrawalActivity({ id: `PAGE-${i}` }));
