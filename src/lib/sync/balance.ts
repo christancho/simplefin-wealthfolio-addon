@@ -1,8 +1,10 @@
 /**
  * Compare two decimal strings without going through float. Balances are
- * compared by normalised value, so "100.0" and "100.00" agree.
+ * compared by normalised value, so "100.0" and "100.00" agree. Reused by
+ * `reconciliation.ts` for the same reason: Wealthfolio's persisted amount
+ * strings don't preserve SimpleFIN's original decimal precision.
  */
-function normalise(value: string): string {
+export function normalise(value: string): string {
   const trimmed = value.trim();
   const negative = trimmed.startsWith('-');
   const [whole, fraction = ''] = trimmed.replace(/^[-+]/, '').split('.');
