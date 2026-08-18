@@ -90,13 +90,23 @@ export async function syncCashAccount(
   watermark: Watermark,
   accountType: AccountType,
   paymentKeywords: string[],
-): Promise<{ result: CashSyncCounts; watermark: Watermark; candidates: StagedCandidate[] }> {
+): Promise<{
+  result: CashSyncCounts;
+  watermark: Watermark;
+  candidates: StagedCandidate[];
+  importedTxns: SfTransaction[];
+}> {
   // Pending transactions are excluded from v1: their id and amount can both
   // change once posted, which would push a row we could never reconcile.
   const candidates = sfAccount.transactions.filter((t) => !t.pending && shouldPush(watermark, t));
 
   if (candidates.length === 0) {
-    return { result: { imported: 0, skipped: 0, duplicates: 0 }, watermark, candidates: [] };
+    return {
+      result: { imported: 0, skipped: 0, duplicates: 0 },
+      watermark,
+      candidates: [],
+      importedTxns: [],
+    };
   }
 
   const rows = candidates.map((t) => toActivityImport(t, mapping, sfAccount.currency, accountType));
@@ -148,7 +158,12 @@ export async function syncCashAccount(
       watermark,
       candidates.filter((_, i) => checked[i].duplicateOfId),
     );
-    return { result: { imported: 0, skipped, duplicates }, watermark: advanced, candidates: [] };
+    return {
+      result: { imported: 0, skipped, duplicates },
+      watermark: advanced,
+      candidates: [],
+      importedTxns: [],
+    };
   }
 
   let outcome;
@@ -180,5 +195,6 @@ export async function syncCashAccount(
     // line is never reached and the watermark stays put, so the next run retries.
     watermark: advanceWatermark(watermark, importableTxns),
     candidates: stagedCandidates,
+    importedTxns: importableTxns,
   };
 }

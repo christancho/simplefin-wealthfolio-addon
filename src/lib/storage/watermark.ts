@@ -12,6 +12,12 @@ import { storageKey } from './keys';
  *    watermark but appearing in a later fetch) is recognised rather than
  *    re-sent.
  *
+ * Keyed by the Wealthfolio account id, not the SimpleFIN one: this is a record
+ * of what has landed in a given ledger, so remapping a SimpleFIN account to a
+ * fresh Wealthfolio account correctly looks like "never synced" for that
+ * destination, rather than inheriting progress that was made against a
+ * different one.
+ *
  * Bounded by construction: the host caps storage values at ~250 KB, which a
  * full ledger of every synced id would eventually exceed.
  */
@@ -62,8 +68,8 @@ export function advanceWatermark(wm: Watermark, pushed: WatermarkTxn[]): Waterma
   return { lastPosted: newest, recentIds: appended.slice(-RECENT_ID_WINDOW) };
 }
 
-export async function readWatermark(api: HostAPI, sfAccountId: string): Promise<Watermark> {
-  const raw = await api.storage.get(storageKey('wm', sfAccountId));
+export async function readWatermark(api: HostAPI, wfAccountId: string): Promise<Watermark> {
+  const raw = await api.storage.get(storageKey('wm', wfAccountId));
   if (!raw) return emptyWatermark();
   try {
     return JSON.parse(raw) as Watermark;
@@ -72,7 +78,7 @@ export async function readWatermark(api: HostAPI, sfAccountId: string): Promise<
     // and say so — a re-push is idempotent-ish via checkImport's duplicate
     // detection, whereas a hard failure would block the account forever.
     api.logger.error(
-      `[simplefin] corrupt watermark for ${sfAccountId}, resetting: ${String(error)}`,
+      `[simplefin] corrupt watermark for ${wfAccountId}, resetting: ${String(error)}`,
     );
     return emptyWatermark();
   }
@@ -80,12 +86,12 @@ export async function readWatermark(api: HostAPI, sfAccountId: string): Promise<
 
 export async function writeWatermark(
   api: HostAPI,
-  sfAccountId: string,
+  wfAccountId: string,
   wm: Watermark,
 ): Promise<void> {
-  await api.storage.set(storageKey('wm', sfAccountId), JSON.stringify(wm));
+  await api.storage.set(storageKey('wm', wfAccountId), JSON.stringify(wm));
 }
 
-export async function resetWatermark(api: HostAPI, sfAccountId: string): Promise<void> {
-  await api.storage.delete(storageKey('wm', sfAccountId));
+export async function resetWatermark(api: HostAPI, wfAccountId: string): Promise<void> {
+  await api.storage.delete(storageKey('wm', wfAccountId));
 }
