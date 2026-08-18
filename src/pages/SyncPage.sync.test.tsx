@@ -26,6 +26,9 @@ describe('SyncPage sync trigger', () => {
   it('calls runSync and renders per-account imported counts', async () => {
     const host = createMockHost();
     seedConfig(host, [CHECKING_MAPPING]);
+    // Not testing first-sync backfill here — mark it already synced so the
+    // opening-balance plug doesn't affect the imported count.
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1700000000 - 86_400, recentIds: [] });
     host.respond(/\/accounts/, {
       body: JSON.stringify({
         accounts: [
@@ -75,6 +78,9 @@ describe('SyncPage sync trigger', () => {
       orgName: 'Bank B',
     };
     seedConfig(host, [CHECKING_MAPPING, secondMapping]);
+    // Not testing first-sync backfill here — mark Checking already synced so
+    // the opening-balance plug doesn't affect its imported count.
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1700000000 - 86_400, recentIds: [] });
     host.respond(/\/accounts/, {
       // ACT-2 is absent from the Bridge response, so its sync fails automatically.
       body: JSON.stringify({
@@ -136,7 +142,7 @@ describe('SyncPage sync trigger', () => {
     // Already synced: a first-sync mismatch is now auto-plugged rather than
     // left as a standing mismatch, so this steady-state UI check needs an
     // account past its first sync to exercise the mismatch path at all.
-    await writeWatermark(host.api, 'ACT-1', { lastPosted: 1700000000 - 86_400, recentIds: [] });
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1700000000 - 86_400, recentIds: [] });
     host.respond(/\/accounts/, {
       body: JSON.stringify({
         accounts: [
@@ -153,7 +159,10 @@ describe('SyncPage sync trigger', () => {
         errors: [],
       }),
     });
-    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', name: 'My Checking', balance: 100 }] as never);
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', name: 'My Checking' }] as never);
+    host.api.portfolio.getLatestValuations = vi.fn(async () => [
+      { accountId: 'WF-1', cashBalance: 100 },
+    ] as never);
 
     render(<SyncPage api={host.api} />);
     await screen.findByText('Checking');
@@ -199,6 +208,9 @@ describe('SyncPage sync trigger', () => {
   it('renders history newest-first after a completed run', async () => {
     const host = createMockHost();
     seedConfig(host, [CHECKING_MAPPING]);
+    // Not testing first-sync backfill here — mark it already synced so the
+    // opening-balance plug doesn't affect the imported count.
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1700000000 - 86_400, recentIds: [] });
     await appendRun(host.api, {
       startedAt: '2026-01-01T00:00:00.000Z',
       finishedAt: '2026-01-01T00:00:01.000Z',

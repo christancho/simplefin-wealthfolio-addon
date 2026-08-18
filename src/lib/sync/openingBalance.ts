@@ -38,6 +38,16 @@ export function subtractDecimal(a: string, b: string): string {
   return `${sign}${whole}.${frac}`;
 }
 
+function negateDecimal(value: string): string {
+  if (/^0(\.0*)?$/.test(value.trim())) return value;
+  return value.trim().startsWith('-') ? value.trim().slice(1) : `-${value.trim()}`;
+}
+
+/** Sums signed decimal strings via `subtractDecimal`, so the same BigInt-safe arithmetic applies. */
+export function sumDecimal(values: string[]): string {
+  return values.reduce((acc, v) => subtractDecimal(acc, negateDecimal(v)), '0');
+}
+
 export interface OpeningBalanceInput {
   sfBalance: string;
   wfBalance: string;

@@ -80,6 +80,10 @@ describe('runSync', () => {
 
   it('isolates a per-account failure so the others still sync', async () => {
     const host = okHost();
+    // Not testing first-sync backfill here — mark both accounts already
+    // synced so the opening-balance plug doesn't affect the imported counts.
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1754438400 - 86_400, recentIds: [] });
+    await writeWatermark(host.api, 'WF-2', { lastPosted: 1754438400 - 86_400, recentIds: [] });
     host.api.activities.import = vi.fn(async (rows: ActivityImport[]) => {
       if (rows[0].accountId === 'WF-1') throw new Error('WF-1 exploded');
       return {
@@ -160,10 +164,10 @@ describe('runSync', () => {
     const host = okHost();
     const nowSeconds = Math.floor(Date.now() / 1000);
     const SECONDS_PER_DAY = 86_400;
-    // ACT-1 already synced yesterday; ACT-2 was just mapped and has never synced.
+    // WF-1 already synced yesterday; WF-2 was just mapped and has never synced.
     // Without a lookback floor, the shared fetch window would be dominated by
-    // ACT-1's recent watermark and ACT-2 would never get its own history.
-    await writeWatermark(host.api, 'ACT-1', {
+    // WF-1's recent watermark and WF-2 would never get its own history.
+    await writeWatermark(host.api, 'WF-1', {
       lastPosted: nowSeconds - SECONDS_PER_DAY,
       recentIds: [],
     });
@@ -182,7 +186,7 @@ describe('runSync', () => {
     const SECONDS_PER_DAY = 86_400;
     // An account stuck for 60 days should still get its overlap re-fetch even
     // though that's further back than the 5-day lookback floor.
-    await writeWatermark(host.api, 'ACT-1', {
+    await writeWatermark(host.api, 'WF-1', {
       lastPosted: nowSeconds - 60 * SECONDS_PER_DAY,
       recentIds: [],
     });
@@ -468,7 +472,6 @@ describe('runSync opening-balance backfill', () => {
     paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
   };
 
-  /** A Wealthfolio account whose balance actually moves as activities are pushed. */
   function backfillHost(sfBalance: string, transactions: unknown[]) {
     const host = createMockHost();
     host.respond(/\/accounts/, {
@@ -489,25 +492,19 @@ describe('runSync opening-balance backfill', () => {
       }),
     });
 
-    let wfBalance = 0;
     const pushed: ActivityImport[] = [];
 
     host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) =>
       a.map((row) => ({ ...row, isValid: true })),
     );
     host.api.activities.import = vi.fn(async (rows: ActivityImport[]) => {
-      for (const row of rows) {
-        pushed.push(row);
-        const amount = Number(row.amount);
-        wfBalance += row.activityType === 'WITHDRAWAL' || row.activityType === 'TRANSFER_OUT' ? -amount : amount;
-      }
+      pushed.push(...rows);
       return {
         activities: [],
         importRunId: 'R',
         summary: { total: rows.length, imported: rows.length, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
       };
     });
-    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', balance: wfBalance } as never]);
 
     return { host, pushed };
   }
@@ -526,13 +523,51 @@ describe('runSync opening-balance backfill', () => {
     expect(run.accounts[0].imported).toBe(2);
   });
 
-  it('fetches full unbounded history scoped to the account on first sync', async () => {
-    const { host } = backfillHost('100.00', []);
+  it('folds a pre-existing Wealthfolio balance into the plug instead of ignoring it', async () => {
+    // A Wealthfolio account can have unrelated activity before it's ever
+    // mapped to a SimpleFIN account — the plug must account for that
+    // pre-existing balance, not assume the account started at zero. This
+    // also guards against computing the plug from a live host read: a
+    // `portfolio.recalculate()` + `getLatestValuations()` call right after
+    // import is not guaranteed to reflect what was just pushed (confirmed
+    // against a live host), so the plug must be derived only from values
+    // already known to this run — the pre-sync snapshot and what it just
+    // imported — never re-queried afterwards.
+    const { host, pushed } = backfillHost('100.00', [
+      { id: 'T1', posted: 1754438400, amount: '-10.00', description: 'X' },
+    ]);
+    host.api.portfolio.getLatestValuations = vi.fn(async () => [
+      { accountId: 'WF-1', cashBalance: 500 } as never,
+    ]);
 
     await runSync(host.api, backfillConfig);
 
-    const backfillRequest = host.requests.find((r) => new URL(r.url).searchParams.get('start-date') === '0');
+    expect(pushed).toHaveLength(2);
+    expect(pushed[1].activityType).toBe('TRANSFER_OUT');
+    // sfBalance(100.00) - (preSync 500 + imported -10.00) = -390.00
+    expect(pushed[1].amount).toBe('390.00');
+  });
+
+  it('fetches history capped at the Bridge-safe window, scoped to the account, on first sync', async () => {
+    const { host } = backfillHost('100.00', []);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const SECONDS_PER_DAY = 86_400;
+
+    await runSync(host.api, backfillConfig);
+
+    // The shared batch fetch (fired first) also scopes to this one mapping's
+    // account, so take the *last* single-account request — the per-account
+    // full-history pull that fires afterwards in syncOne.
+    const singleAccountRequests = host.requests.filter(
+      (r) => new URL(r.url).searchParams.getAll('account').length === 1,
+    );
+    const backfillRequest = singleAccountRequests[singleAccountRequests.length - 1];
+    expect(singleAccountRequests.length).toBeGreaterThanOrEqual(2);
     expect(backfillRequest).toBeDefined();
+    const startDate = Number(new URL(backfillRequest!.url).searchParams.get('start-date'));
+    // 40 days back, give or take a second of test-run drift.
+    expect(startDate).toBeGreaterThan(nowSeconds - 41 * SECONDS_PER_DAY);
+    expect(startDate).toBeLessThanOrEqual(nowSeconds - 40 * SECONDS_PER_DAY);
     expect(new URL(backfillRequest!.url).searchParams.getAll('account')).toEqual(['ACT-1']);
   });
 
@@ -549,7 +584,7 @@ describe('runSync opening-balance backfill', () => {
 
   it('does not run the backfill fetch for a mapping that has already synced', async () => {
     const { host } = backfillHost('100.00', []);
-    await writeWatermark(host.api, 'ACT-1', { lastPosted: 1754438400, recentIds: [] });
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1754438400, recentIds: [] });
 
     await runSync(host.api, backfillConfig);
 

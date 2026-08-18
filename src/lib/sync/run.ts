@@ -1,13 +1,13 @@
 import type { AccountType, HostAPI } from '@wealthfolio/addon-sdk';
 import { fetchAccounts } from '../simplefin/client';
-import type { SfAccount } from '../simplefin/parse';
+import type { SfAccount, SfTransaction } from '../simplefin/parse';
 import { cashAccountIdsFrom, type AccountMapping, type SyncConfig } from '../storage/config';
 import { appendRun, type AccountRunResult, type SyncRun } from '../storage/history';
 import { readStaging, writeStaging, type StagedCandidate } from '../storage/staging';
 import { readWatermark, writeWatermark } from '../storage/watermark';
 import { syncCashAccount } from './activities';
 import { compareBalances } from './balance';
-import { buildOpeningBalanceActivity } from './openingBalance';
+import { buildOpeningBalanceActivity, sumDecimal } from './openingBalance';
 import { runReconciliation } from './reconciliation';
 import { syncHoldingsAccount } from './snapshots';
 
@@ -20,23 +20,30 @@ const OVERLAP_DAYS = 7;
 const SECONDS_PER_DAY = 86_400;
 
 /**
+ * The Bridge advises against requesting more than 45 days of history in one
+ * call (older requests come back with an advisory error). A first sync has
+ * no need to push right up against that limit anyway — the opening-balance
+ * plug below covers whatever real history this can't reach.
+ */
+const FULL_HISTORY_DAYS = 40;
+
+/**
  * Full-history pull for a CASH mapping's first-ever sync. The shared batch
  * fetch in runSync is deliberately windowed (lookbackDays), so a fresh
  * mapping never gets more than one statement cycle from it — this is the
- * separate, per-account counterpart that asks for everything the Bridge is
- * willing to give, so the opening-balance plug below has as little gap as
- * possible left to cover. An explicit epoch-0 startDate is used rather than
- * omitting the param: the SimpleFIN spec treats an omitted start-date as
- * bridge-implementation-defined, not a documented "give me everything".
+ * separate, per-account counterpart that asks for as much of that as the
+ * Bridge allows, so the opening-balance plug below has as little gap as
+ * possible left to cover.
  */
 async function fetchFullHistory(
   api: HostAPI,
   baseUrl: string,
   sfAccountId: string,
 ): Promise<SfAccount | undefined> {
+  const nowSeconds = Math.floor(Date.now() / 1000);
   const { accounts } = await fetchAccounts(api.network, baseUrl, {
     accountIds: [sfAccountId],
-    startDate: 0,
+    startDate: nowSeconds - FULL_HISTORY_DAYS * SECONDS_PER_DAY,
   });
   return accounts.find((a) => a.id === sfAccountId);
 }
@@ -44,22 +51,26 @@ async function fetchFullHistory(
 /**
  * Plugs the gap between SimpleFIN's current balance and whatever the
  * full-history pull actually landed in Wealthfolio, as one synthetic
- * TRANSFER_IN/OUT activity. The gap is read from Wealthfolio's real balance
- * after the push rather than tracked through the batch import's return value
- * — `ImportActivitiesResult.summary` only carries counts, not which rows
- * landed or their amounts, and diffing the account's actual balance sidesteps
- * needing that: a retry after a partial failure just recomputes against
- * whatever is really there, so a gap already closed comes out as zero and is
- * skipped rather than double-plugged.
+ * TRANSFER_IN/OUT activity.
+ *
+ * The post-import Wealthfolio balance is computed here, not read back from
+ * the host: `portfolio.recalculate()` resolving is not a reliable signal
+ * that `portfolio.getLatestValuations()` reflects the activities just
+ * imported — confirmed against a live host, where a `recalculate()` +
+ * `getLatestValuations()` read immediately after import came back against
+ * the pre-import (empty) balance, silently doubling the plug by the whole
+ * real-history total. `preSyncBalance` (read once, before this run touched
+ * anything) plus the signed sum of what actually got imported this run can't
+ * race with anything, since both are already-known values.
  */
 async function pushOpeningBalance(
   api: HostAPI,
   mapping: AccountMapping,
   sfAccount: SfAccount,
+  preSyncBalance: string | null,
+  importedTxns: SfTransaction[],
 ): Promise<number> {
-  await api.portfolio.recalculate();
-  const wfAccount = (await api.accounts.getAll()).find((a) => a.id === mapping.wfAccountId);
-  if (!wfAccount) return 0;
+  const wfBalance = sumDecimal([preSyncBalance ?? '0', ...importedTxns.map((t) => t.amount)]);
 
   const posted = sfAccount.transactions.filter((t) => !t.pending);
   const earliestPosted = posted.length > 0 ? Math.min(...posted.map((t) => t.posted)) : null;
@@ -67,7 +78,7 @@ async function pushOpeningBalance(
   const plug = buildOpeningBalanceActivity(
     {
       sfBalance: sfAccount.balance,
-      wfBalance: String(wfAccount.balance),
+      wfBalance,
       earliestPosted,
       balanceDate: sfAccount.balanceDate,
     },
@@ -135,7 +146,7 @@ async function syncOne(
       };
     }
 
-    const watermark = await readWatermark(api, mapping.sfAccountId);
+    const watermark = await readWatermark(api, mapping.wfAccountId);
     const isFirstSync = watermark.lastPosted === 0;
 
     // A fresh mapping never has enough in the shared, lookbackDays-windowed
@@ -145,7 +156,12 @@ async function syncOne(
       ? ((await fetchFullHistory(api, baseUrl, mapping.sfAccountId)) ?? sfAccount)
       : sfAccount;
 
-    const { result, watermark: next, candidates } = await syncCashAccount(
+    const {
+      result,
+      watermark: next,
+      candidates,
+      importedTxns,
+    } = await syncCashAccount(
       api,
       mapping,
       syncSfAccount,
@@ -153,9 +169,17 @@ async function syncOne(
       wfAccountTypes.get(mapping.wfAccountId) ?? 'CASH',
       paymentKeywords,
     );
-    await writeWatermark(api, mapping.sfAccountId, next);
+    await writeWatermark(api, mapping.wfAccountId, next);
 
-    const plugImported = isFirstSync ? await pushOpeningBalance(api, mapping, syncSfAccount) : 0;
+    const plugImported = isFirstSync
+      ? await pushOpeningBalance(
+          api,
+          mapping,
+          syncSfAccount,
+          wfBalances.get(mapping.wfAccountId) ?? null,
+          importedTxns,
+        )
+      : 0;
 
     return {
       accountResult: {
@@ -191,7 +215,7 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   // response also lets one institution's error surface alongside healthy data.
   // The window starts at the oldest watermark so no account is short-changed.
   const watermarks = await Promise.all(
-    config.mappings.map((m) => readWatermark(api, m.sfAccountId)),
+    config.mappings.map((m) => readWatermark(api, m.wfAccountId)),
   );
   const oldestWatermark = watermarks.reduce(
     (min, wm) => (wm.lastPosted > 0 && wm.lastPosted < min ? wm.lastPosted : min),
@@ -217,12 +241,22 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
 
   // Wealthfolio balances for the post-sync mismatch check. A failure here must
   // not fail the run — the check is diagnostic, so it degrades to "unavailable".
+  // The balance comes from `portfolio.getLatestValuations` — confirmed against
+  // a live host that `accounts.getAll()` doesn't carry a `balance` field at all.
   const wfBalances = new Map<string, string>();
   const wfAccountTypes = new Map<string, AccountType>();
   try {
     for (const account of await api.accounts.getAll()) {
-      if (Number.isFinite(account.balance)) wfBalances.set(account.id, String(account.balance));
       wfAccountTypes.set(account.id, account.accountType);
+    }
+    await api.portfolio.recalculate();
+    const valuations = await api.portfolio.getLatestValuations(
+      config.mappings.map((m) => m.wfAccountId),
+    );
+    for (const valuation of valuations) {
+      if (Number.isFinite(valuation.cashBalance)) {
+        wfBalances.set(valuation.accountId, String(valuation.cashBalance));
+      }
     }
   } catch (error) {
     api.logger.error(
@@ -246,6 +280,15 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
     );
     results.push(accountResult);
     detectedCandidates.push(...candidates);
+  }
+
+  // Best-effort: refresh the host's own cached valuations to reflect what
+  // this run just imported, for whatever reads them next. Nothing in this
+  // run's own results depends on it, so a failure here is not fatal.
+  try {
+    await api.portfolio.recalculate();
+  } catch (error) {
+    api.logger.error(`[simplefin] post-sync portfolio.recalculate failed: ${String(error)}`);
   }
 
   const cashAccountIds = cashAccountIdsFrom(config.mappings, (id) => wfAccountTypes.get(id));
