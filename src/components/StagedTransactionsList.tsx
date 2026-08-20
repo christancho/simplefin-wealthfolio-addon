@@ -14,21 +14,24 @@ import {
   TableRow,
 } from '@wealthfolio/ui';
 import { useEffect, useState } from 'react';
-import { describeWithdrawals, resolveAmbiguous } from '../lib/sync/reconciliation';
+import { describeWithdrawals, findBackfillCandidates, resolveAmbiguous, runReconciliation } from '../lib/sync/reconciliation';
 import { readStaging, writeStaging, type StagedCandidate } from '../lib/storage/staging';
 import { compactCellClassName, compactHeadClassName } from './tableStyle';
 
 export interface StagedTransactionsListProps {
   api: HostAPI;
   cashAccountIds: string[];
+  cardAccountIds: string[];
+  paymentKeywords: string[];
 }
 
-export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactionsListProps) {
+export function StagedTransactionsList({ api, cashAccountIds, cardAccountIds, paymentKeywords }: StagedTransactionsListProps) {
   const [candidates, setCandidates] = useState<StagedCandidate[] | null>(null);
   const [resolving, setResolving] = useState<StagedCandidate | null>(null);
   const [choices, setChoices] = useState<ActivityDetails[]>([]);
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   async function load() {
     try {
@@ -77,12 +80,45 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
     }
   }
 
+  async function scanForOlderPayments() {
+    setError(null);
+    setScanning(true);
+    try {
+      const existing = await readStaging(api);
+      const found = await findBackfillCandidates(api, cardAccountIds, paymentKeywords, existing);
+      const { candidates: remaining } = await runReconciliation(
+        api,
+        [...existing, ...found],
+        cashAccountIds,
+        Math.floor(Date.now() / 1000),
+      );
+      setCandidates(remaining);
+      await writeStaging(api, remaining);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  const scanButton = (
+    <Button size="sm" variant="outline" onClick={scanForOlderPayments} disabled={scanning}>
+      {scanning ? 'Scanning…' : 'Scan for older payments'}
+    </Button>
+  );
+
   if (candidates === null) {
-    return error ? <p className="text-destructive text-sm">{error}</p> : null;
+    return (
+      <>
+        {scanButton}
+        {error && <p className="text-destructive text-sm">{error}</p>}
+      </>
+    );
   }
   if (candidates.length === 0) {
     return (
       <>
+        {scanButton}
         {error && <p className="text-destructive text-sm">{error}</p>}
         <p className="text-muted-foreground text-sm">No staged transactions.</p>
       </>
@@ -91,6 +127,7 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
 
   return (
     <>
+      {scanButton}
       {error && <p className="text-destructive text-sm">{error}</p>}
       <Table aria-label="Staged transactions">
         <TableHeader>

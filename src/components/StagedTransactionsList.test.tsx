@@ -27,10 +27,16 @@ const ambiguous: StagedCandidate = {
   candidateWithdrawalIds: ['CASH-A', 'CASH-B'],
 };
 
+const defaultProps = {
+  cashAccountIds: ['WF-CASH'],
+  cardAccountIds: ['WF-CARD'],
+  paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
+};
+
 describe('StagedTransactionsList', () => {
   it('shows a message when there is nothing staged', async () => {
     const host = createMockHost();
-    render(<StagedTransactionsList api={host.api} cashAccountIds={['WF-CASH']} />);
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
   });
 
@@ -40,7 +46,7 @@ describe('StagedTransactionsList', () => {
       throw new Error('storage unavailable');
     }) as never;
 
-    render(<StagedTransactionsList api={host.api} cashAccountIds={['WF-CASH']} />);
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
 
     expect(await screen.findByText(/storage unavailable/i)).toBeInTheDocument();
   });
@@ -49,7 +55,7 @@ describe('StagedTransactionsList', () => {
     const host = createMockHost();
     await writeStaging(host.api, [pending, ambiguous]);
 
-    render(<StagedTransactionsList api={host.api} cashAccountIds={['WF-CASH']} />);
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
 
     expect(await screen.findByText('50.00')).toBeInTheDocument();
     expect(screen.getByText('Online Payment Thank You')).toBeInTheDocument();
@@ -61,7 +67,7 @@ describe('StagedTransactionsList', () => {
     const host = createMockHost();
     await writeStaging(host.api, [pending]);
 
-    render(<StagedTransactionsList api={host.api} cashAccountIds={['WF-CASH']} />);
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
     await userEvent.click(await screen.findByRole('button', { name: /dismiss/i }));
 
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
@@ -95,7 +101,7 @@ describe('StagedTransactionsList', () => {
       errors: [],
     })) as never;
 
-    render(<StagedTransactionsList api={host.api} cashAccountIds={['WF-CASH']} />);
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
 
     const row = (await screen.findByText('Autopay')).closest('tr') as HTMLElement;
     await userEvent.click(within(row).getByRole('button', { name: /resolve/i }));
@@ -111,5 +117,86 @@ describe('StagedTransactionsList', () => {
       ],
     });
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
+  });
+
+  it('scans existing activities and stages a keyword match with no withdrawal pair yet', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') {
+        return {
+          data: [
+            {
+              id: 'OLD-CARD-ACT',
+              accountId: 'WF-CARD',
+              activityType: 'CREDIT',
+              date: '2026-06-01T00:00:00+00:00',
+              amount: '75.00',
+              currency: 'USD',
+              comment: 'Online Payment Thank You',
+            },
+          ],
+          meta: { totalRowCount: 1 },
+        };
+      }
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
+    await screen.findByText(/no staged transactions/i);
+
+    await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
+
+    expect(await screen.findByText('75.00')).toBeInTheDocument();
+    expect(screen.getByText('pending')).toBeInTheDocument();
+    expect(host.storage.get('simplefin.staging')).toContain('OLD-CARD-ACT');
+  });
+
+  it('immediately resolves a scanned candidate when a matching withdrawal already exists', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') {
+        return {
+          data: [
+            {
+              id: 'OLD-CARD-ACT',
+              accountId: 'WF-CARD',
+              activityType: 'CREDIT',
+              date: '2026-06-01T00:00:00+00:00',
+              amount: '75.00',
+              currency: 'USD',
+              comment: 'Online Payment Thank You',
+            },
+          ],
+          meta: { totalRowCount: 1 },
+        };
+      }
+      return {
+        data: [
+          {
+            id: 'OLD-CASH-ACT',
+            accountId: 'WF-CASH',
+            activityType: 'WITHDRAWAL',
+            date: '2026-05-31T00:00:00+00:00',
+            amount: '75.00',
+            currency: 'USD',
+            comment: 'Bill Pay',
+          },
+        ],
+        meta: { totalRowCount: 1 },
+      };
+    }) as never;
+
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
+    await screen.findByText(/no staged transactions/i);
+
+    await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
+
+    expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'OLD-CARD-ACT', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'OLD-CASH-ACT', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
   });
 });

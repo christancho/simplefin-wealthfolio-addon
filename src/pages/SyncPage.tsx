@@ -11,7 +11,7 @@ import { SyncSummary } from '../components/SyncSummary';
 import { fetchAccounts } from '../lib/simplefin/client';
 import type { SfAccount } from '../lib/simplefin/parse';
 import { bridgeDashboardUrl } from '../lib/simplefin/url';
-import { cashAccountIdsFrom, readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
+import { cardAccountIdsFrom, cashAccountIdsFrom, readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
 import { readHistory, type SyncRun } from '../lib/storage/history';
 import { runSync } from '../lib/sync/run';
 
@@ -192,6 +192,11 @@ export function SyncPage({ api }: SyncPageProps) {
                 config.mappings,
                 (id) => wfAccounts.find((a) => a.id === id)?.accountType,
               )}
+              cardAccountIds={cardAccountIdsFrom(
+                config.mappings,
+                (id) => wfAccounts.find((a) => a.id === id)?.accountType,
+              )}
+              paymentKeywords={config.paymentKeywords}
             />
           </TabsContent>
           <TabsContent value="settings" className="mt-0">

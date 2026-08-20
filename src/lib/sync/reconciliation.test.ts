@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActivityDetails } from '@wealthfolio/addon-sdk';
 import { createMockHost } from '../../test/mockHost';
 import type { StagedCandidate } from '../storage/staging';
-import { describeWithdrawals, findCardActivity, resolveAmbiguous, runReconciliation } from './reconciliation';
+import {
+  describeWithdrawals,
+  findBackfillCandidates,
+  findCardActivity,
+  resolveAmbiguous,
+  runReconciliation,
+} from './reconciliation';
 
 const NOW = 1754438400 + 5 * 86_400; // 5 days after the fixtures' posted date
 
@@ -134,6 +140,21 @@ describe('runReconciliation', () => {
     expect(candidates).toHaveLength(0);
     expect(summary.expired).toBe(1);
     expect(host.api.activities.search).not.toHaveBeenCalled();
+  });
+
+  it('never expires a backfilled candidate, however old its posted date', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const old = candidate({ postedDate: '2025-07-01', backfilled: true });
+    const { candidates, summary } = await runReconciliation(host.api, [old], ['WF-CASH'], NOW);
+
+    expect(summary.expired).toBe(0);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].status).toBe('pending');
   });
 
   it('isolates a per-candidate failure so other candidates still resolve', async () => {
@@ -285,6 +306,106 @@ describe('describeWithdrawals', () => {
 
     const found = await describeWithdrawals(host.api, ['WF-CASH'], ['A', 'C']);
     expect(found.map((r) => r.id).sort()).toEqual(['A', 'C']);
+  });
+});
+
+describe('findBackfillCandidates', () => {
+  it('stages a CREDIT activity whose comment matches a payment keyword', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async () => ({ data: [cardActivity()], meta: { totalRowCount: 1 } })) as never;
+
+    const found = await findBackfillCandidates(host.api, ['WF-CARD'], ['PAYMENT', 'AUTOPAY', 'THANK YOU'], []);
+
+    expect(found).toEqual([
+      {
+        sfTransactionId: 'CARD-ACT-1',
+        cardAccountId: 'WF-CARD',
+        cardActivityId: 'CARD-ACT-1',
+        amount: '50',
+        postedDate: '2025-08-06',
+        comment: 'Online Payment Thank You',
+        status: 'pending',
+        candidateWithdrawalIds: [],
+        backfilled: true,
+      },
+    ]);
+  });
+
+  it('ignores a CREDIT activity whose comment matches no payment keyword', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async () => ({
+      data: [cardActivity({ comment: 'Grocery Store Refund' })],
+      meta: { totalRowCount: 1 },
+    })) as never;
+
+    const found = await findBackfillCandidates(host.api, ['WF-CARD'], ['PAYMENT', 'AUTOPAY', 'THANK YOU'], []);
+
+    expect(found).toEqual([]);
+  });
+
+  it('skips an activity already resolved to the same cardActivityId in existing staging', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async () => ({ data: [cardActivity()], meta: { totalRowCount: 1 } })) as never;
+
+    const found = await findBackfillCandidates(
+      host.api,
+      ['WF-CARD'],
+      ['PAYMENT'],
+      [candidate({ cardActivityId: 'CARD-ACT-1' })],
+    );
+
+    expect(found).toEqual([]);
+  });
+
+  it('skips an activity matching an unresolved existing candidate by amount/date/comment', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async () => ({ data: [cardActivity()], meta: { totalRowCount: 1 } })) as never;
+
+    const found = await findBackfillCandidates(
+      host.api,
+      ['WF-CARD'],
+      ['PAYMENT'],
+      [candidate({ cardActivityId: null, amount: '50', postedDate: '2025-08-06', comment: 'Online Payment Thank You' })],
+    );
+
+    expect(found).toEqual([]);
+  });
+
+  it('does not skip a same amount/date/comment activity on a different card account', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async () => ({
+      data: [cardActivity({ id: 'CARD-ACT-OTHER', accountId: 'WF-CARD-2' })],
+      meta: { totalRowCount: 1 },
+    })) as never;
+
+    const found = await findBackfillCandidates(
+      host.api,
+      ['WF-CARD-2'],
+      ['PAYMENT'],
+      [
+        candidate({
+          cardAccountId: 'WF-CARD',
+          cardActivityId: null,
+          amount: '50',
+          postedDate: '2025-08-06',
+          comment: 'Online Payment Thank You',
+        }),
+      ],
+    );
+
+    expect(found).toEqual([
+      expect.objectContaining({ sfTransactionId: 'CARD-ACT-OTHER', cardAccountId: 'WF-CARD-2' }),
+    ]);
+  });
+
+  it('returns nothing and never searches when no card accounts are given', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn();
+
+    const found = await findBackfillCandidates(host.api, [], ['PAYMENT'], []);
+
+    expect(found).toEqual([]);
+    expect(host.api.activities.search).not.toHaveBeenCalled();
   });
 });
 

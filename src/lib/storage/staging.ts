@@ -4,7 +4,12 @@ import { storageKey } from './keys';
 export type CandidateStatus = 'pending' | 'ambiguous';
 
 export interface StagedCandidate {
-  /** Identity: the SimpleFIN transaction id of the card-side CREDIT. */
+  /**
+   * Identity: the SimpleFIN transaction id of the card-side CREDIT for a
+   * live-detected candidate — or, for a `backfilled` one (where the original
+   * SimpleFIN id isn't recoverable), the Wealthfolio activity id. Only ever
+   * used as an opaque key; never compared against real SimpleFIN data.
+   */
   sfTransactionId: string;
   /** Wealthfolio account id of the credit-card account. */
   cardAccountId: string;
@@ -17,6 +22,13 @@ export interface StagedCandidate {
   status: CandidateStatus;
   /** Populated once status is 'ambiguous'; the real Wealthfolio activity ids of the competing withdrawals. */
   candidateWithdrawalIds: string[];
+  /**
+   * Set for candidates found by scanning already-imported activities rather
+   * than detected during a live sync. These predate the 7-day match window by
+   * definition, so they're exempt from the expiry sweep in `runReconciliation`
+   * — they stay staged until a user resolves or dismisses them.
+   */
+  backfilled?: boolean;
 }
 
 const STAGING_KEY = storageKey('staging');
