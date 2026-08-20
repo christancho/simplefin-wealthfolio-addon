@@ -208,6 +208,7 @@ export function SyncPage({ api }: SyncPageProps) {
                 (id) => wfAccounts.find((a) => a.id === id)?.accountType,
               )}
               paymentKeywords={config.paymentKeywords}
+              wfAccounts={wfAccounts}
             />
           </TabsContent>
           <TabsContent value="settings" className="mt-0">

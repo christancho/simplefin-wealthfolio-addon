@@ -33,6 +33,7 @@ const defaultProps = {
   cashAccountIds: ['WF-CASH'],
   cardAccountIds: ['WF-CARD'],
   paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
+  wfAccounts: [] as never,
 };
 
 describe('StagedTransactionsList', () => {
@@ -63,6 +64,34 @@ describe('StagedTransactionsList', () => {
     expect(screen.getByText('Online Payment Thank You')).toBeInTheDocument();
     expect(screen.getByText('$80.00')).toBeInTheDocument();
     expect(screen.getByText('Autopay')).toBeInTheDocument();
+  });
+
+  it('groups staged candidates under a header naming each credit-card account', async () => {
+    const host = createMockHost();
+    await writeStaging(host.api, [
+      { ...pending, sfTransactionId: 'TXN-A', cardAccountId: 'WF-CARD-A', comment: 'Chase Payment' },
+      { ...pending, sfTransactionId: 'TXN-B', cardAccountId: 'WF-CARD-B', comment: 'Amex Payment' },
+    ]);
+
+    render(
+      <StagedTransactionsList
+        api={host.api}
+        {...defaultProps}
+        wfAccounts={
+          [
+            { id: 'WF-CARD-A', name: 'Chase Sapphire' },
+            { id: 'WF-CARD-B', name: 'Amex Gold' },
+          ] as never
+        }
+      />,
+    );
+
+    expect(await screen.findByText(/chase sapphire \(1\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/amex gold \(1\)/i)).toBeInTheDocument();
+    const chaseGroup = screen.getByText(/chase sapphire \(1\)/i).closest('tr') as HTMLElement;
+    const amexGroup = screen.getByText(/amex gold \(1\)/i).closest('tr') as HTMLElement;
+    expect(within(chaseGroup.nextElementSibling as HTMLElement).getByText('Chase Payment')).toBeInTheDocument();
+    expect(within(amexGroup.nextElementSibling as HTMLElement).getByText('Amex Payment')).toBeInTheDocument();
   });
 
   it('dismisses a pending candidate without calling the host activities API', async () => {

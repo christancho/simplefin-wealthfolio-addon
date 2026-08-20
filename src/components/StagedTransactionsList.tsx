@@ -1,4 +1,4 @@
-import type { ActivityDetails, HostAPI } from '@wealthfolio/addon-sdk';
+import type { Account, ActivityDetails, HostAPI } from '@wealthfolio/addon-sdk';
 import {
   Button,
   Dialog,
@@ -14,19 +14,39 @@ import {
   TableRow,
   formatAmount,
 } from '@wealthfolio/ui';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { describeWithdrawals, findBackfillCandidates, resolveAmbiguous, runReconciliation } from '../lib/sync/reconciliation';
 import { readStaging, writeStaging, type StagedCandidate } from '../lib/storage/staging';
 import { compactCellClassName, compactHeadClassName } from './tableStyle';
+
+const COLUMN_COUNT = 4;
+
+/** Groups candidates by credit-card account, preserving first-seen order. */
+function groupByCardAccount(candidates: StagedCandidate[]): [string, StagedCandidate[]][] {
+  const groups = new Map<string, StagedCandidate[]>();
+  for (const candidate of candidates) {
+    const group = groups.get(candidate.cardAccountId) ?? [];
+    group.push(candidate);
+    groups.set(candidate.cardAccountId, group);
+  }
+  return [...groups.entries()];
+}
 
 export interface StagedTransactionsListProps {
   api: HostAPI;
   cashAccountIds: string[];
   cardAccountIds: string[];
   paymentKeywords: string[];
+  wfAccounts: Account[];
 }
 
-export function StagedTransactionsList({ api, cashAccountIds, cardAccountIds, paymentKeywords }: StagedTransactionsListProps) {
+export function StagedTransactionsList({
+  api,
+  cashAccountIds,
+  cardAccountIds,
+  paymentKeywords,
+  wfAccounts,
+}: StagedTransactionsListProps) {
   const [candidates, setCandidates] = useState<StagedCandidate[] | null>(null);
   const [resolving, setResolving] = useState<StagedCandidate | null>(null);
   const [choices, setChoices] = useState<ActivityDetails[]>([]);
@@ -140,25 +160,37 @@ export function StagedTransactionsList({ api, cashAccountIds, cardAccountIds, pa
           </TableRow>
         </TableHeader>
         <TableBody>
-          {candidates.map((candidate) => (
-            <TableRow key={candidate.sfTransactionId}>
-              <TableCell className={compactCellClassName}>{formatAmount(candidate.amount, candidate.currency)}</TableCell>
-              <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
-              <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
-              <TableCell className={compactCellClassName}>
-                <div className="flex gap-2">
-                  {candidate.status === 'ambiguous' && (
-                    <Button size="sm" onClick={() => openResolve(candidate)}>
-                      Resolve
-                    </Button>
-                  )}
-                  <Button size="sm" variant="outline" onClick={() => dismiss(candidate)}>
-                    Dismiss
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
+          {groupByCardAccount(candidates).map(([cardAccountId, group]) => {
+            const accountName = wfAccounts.find((a) => a.id === cardAccountId)?.name ?? cardAccountId;
+            return (
+              <Fragment key={cardAccountId}>
+                <TableRow>
+                  <TableCell className={compactCellClassName} colSpan={COLUMN_COUNT}>
+                    {`${accountName} (${group.length})`}
+                  </TableCell>
+                </TableRow>
+                {group.map((candidate) => (
+                  <TableRow key={candidate.sfTransactionId}>
+                    <TableCell className={compactCellClassName}>{formatAmount(candidate.amount, candidate.currency)}</TableCell>
+                    <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
+                    <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
+                    <TableCell className={compactCellClassName}>
+                      <div className="flex gap-2">
+                        {candidate.status === 'ambiguous' && (
+                          <Button size="sm" onClick={() => openResolve(candidate)}>
+                            Resolve
+                          </Button>
+                        )}
+                        <Button size="sm" variant="outline" onClick={() => dismiss(candidate)}>
+                          Dismiss
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </Fragment>
+            );
+          })}
         </TableBody>
       </Table>
       <Dialog open={resolving !== null} onOpenChange={(open) => !open && setResolving(null)}>
