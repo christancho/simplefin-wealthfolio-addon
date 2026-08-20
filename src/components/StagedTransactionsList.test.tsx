@@ -10,6 +10,7 @@ const pending: StagedCandidate = {
   cardAccountId: 'WF-CARD',
   cardActivityId: null,
   amount: '50.00',
+  currency: 'USD',
   postedDate: '2026-08-01',
   comment: 'Online Payment Thank You',
   status: 'pending',
@@ -21,6 +22,7 @@ const ambiguous: StagedCandidate = {
   cardAccountId: 'WF-CARD',
   cardActivityId: 'CARD-ACT-2',
   amount: '80.00',
+  currency: 'USD',
   postedDate: '2026-08-02',
   comment: 'Autopay',
   status: 'ambiguous',
@@ -57,9 +59,9 @@ describe('StagedTransactionsList', () => {
 
     render(<StagedTransactionsList api={host.api} {...defaultProps} />);
 
-    expect(await screen.findByText('50.00')).toBeInTheDocument();
+    expect(await screen.findByText('$50.00')).toBeInTheDocument();
     expect(screen.getByText('Online Payment Thank You')).toBeInTheDocument();
-    expect(screen.getByText('80.00')).toBeInTheDocument();
+    expect(screen.getByText('$80.00')).toBeInTheDocument();
     expect(screen.getByText('Autopay')).toBeInTheDocument();
   });
 
@@ -75,7 +77,7 @@ describe('StagedTransactionsList', () => {
     expect(host.storage.get('simplefin.staging')).toBe('[]');
   });
 
-  it('shows a picker for an ambiguous candidate and resolves the chosen withdrawal', async () => {
+  it('shows a picker for an ambiguous candidate as a table of account/description/amount and resolves the chosen withdrawal', async () => {
     const host = createMockHost();
     await writeStaging(host.api, [ambiguous]);
     host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
@@ -87,8 +89,8 @@ describe('StagedTransactionsList', () => {
       }
       return {
         data: [
-          { id: 'CASH-A', accountId: 'WF-CASH', activityType: 'WITHDRAWAL', date: '2026-07-31T00:00:00+00:00', amount: '80', currency: 'USD', comment: 'Bill Pay A' },
-          { id: 'CASH-B', accountId: 'WF-CASH', activityType: 'WITHDRAWAL', date: '2026-07-30T00:00:00+00:00', amount: '80', currency: 'USD', comment: 'Bill Pay B' },
+          { id: 'CASH-A', accountId: 'WF-CASH', accountName: 'Joint Checking', activityType: 'WITHDRAWAL', date: '2026-07-31T00:00:00+00:00', amount: '80', currency: 'USD', comment: 'Bill Pay A' },
+          { id: 'CASH-B', accountId: 'WF-CASH-2', accountName: 'Personal Checking', activityType: 'WITHDRAWAL', date: '2026-07-30T00:00:00+00:00', amount: '80', currency: 'USD', comment: 'Bill Pay B' },
         ],
         meta: { totalRowCount: 2 },
       };
@@ -107,6 +109,14 @@ describe('StagedTransactionsList', () => {
     await userEvent.click(within(row).getByRole('button', { name: /resolve/i }));
 
     const dialog = await screen.findByRole('dialog');
+    const table = within(dialog).getByRole('table');
+    expect(within(table).getByRole('columnheader', { name: /account/i })).toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: /description/i })).toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: /amount/i })).toBeInTheDocument();
+    expect(within(table).getByText('Joint Checking')).toBeInTheDocument();
+    expect(within(table).getByText('Personal Checking')).toBeInTheDocument();
+    expect(within(table).getAllByText('$80.00')).toHaveLength(2);
+
     await userEvent.click(within(dialog).getByText(/bill pay a/i));
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm/i }));
 
@@ -146,7 +156,7 @@ describe('StagedTransactionsList', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
 
-    expect(await screen.findByText('75.00')).toBeInTheDocument();
+    expect(await screen.findByText('$75.00')).toBeInTheDocument();
     expect(screen.getByText('pending')).toBeInTheDocument();
     expect(host.storage.get('simplefin.staging')).toContain('OLD-CARD-ACT');
   });

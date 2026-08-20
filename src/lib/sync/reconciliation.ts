@@ -145,6 +145,7 @@ export async function findBackfillCandidates(
       cardAccountId: row.accountId,
       cardActivityId: row.id,
       amount: row.amount ?? '0',
+      currency: row.currency,
       postedDate: toIsoDateOnly(row.date),
       comment: row.comment ?? '',
       status: 'pending' as const,

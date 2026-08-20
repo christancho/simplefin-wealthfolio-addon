@@ -16,6 +16,7 @@ export interface StagedCandidate {
   /** Real Wealthfolio activity id — null until a reconciliation pass resolves it via search(). */
   cardActivityId: string | null;
   amount: string;
+  currency: string;
   /** ISO date (YYYY-MM-DD) the card CREDIT posted. */
   postedDate: string;
   comment: string;

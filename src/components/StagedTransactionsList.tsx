@@ -12,6 +12,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  formatAmount,
 } from '@wealthfolio/ui';
 import { useEffect, useState } from 'react';
 import { describeWithdrawals, findBackfillCandidates, resolveAmbiguous, runReconciliation } from '../lib/sync/reconciliation';
@@ -141,7 +142,7 @@ export function StagedTransactionsList({ api, cashAccountIds, cardAccountIds, pa
         <TableBody>
           {candidates.map((candidate) => (
             <TableRow key={candidate.sfTransactionId}>
-              <TableCell className={compactCellClassName}>{candidate.amount}</TableCell>
+              <TableCell className={compactCellClassName}>{formatAmount(candidate.amount, candidate.currency)}</TableCell>
               <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
               <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
               <TableCell className={compactCellClassName}>
@@ -166,20 +167,39 @@ export function StagedTransactionsList({ api, cashAccountIds, cardAccountIds, pa
             <DialogTitle>Pick the matching withdrawal</DialogTitle>
           </DialogHeader>
           {error && <p className="text-destructive text-sm">{error}</p>}
-          <div className="space-y-2">
-            {choices.map((choice) => (
-              <label key={choice.id} className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="withdrawal-choice"
-                  value={choice.id}
-                  checked={chosenId === choice.id}
-                  onChange={() => setChosenId(choice.id)}
-                />
-                {choice.comment} — {choice.amount}
-              </label>
-            ))}
-          </div>
+          <Table aria-label="Matching withdrawals">
+            <TableHeader>
+              <TableRow>
+                <TableHead className={compactHeadClassName} />
+                <TableHead className={compactHeadClassName}>Account</TableHead>
+                <TableHead className={compactHeadClassName}>Description</TableHead>
+                <TableHead className={compactHeadClassName}>Amount</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {choices.map((choice) => (
+                <TableRow
+                  key={choice.id}
+                  className="cursor-pointer"
+                  onClick={() => setChosenId(choice.id)}
+                >
+                  <TableCell className={compactCellClassName}>
+                    <input
+                      type="radio"
+                      name="withdrawal-choice"
+                      value={choice.id}
+                      checked={chosenId === choice.id}
+                      onChange={() => setChosenId(choice.id)}
+                      aria-label={`Select ${choice.accountName} — ${choice.comment}`}
+                    />
+                  </TableCell>
+                  <TableCell className={compactCellClassName}>{choice.accountName}</TableCell>
+                  <TableCell className={compactCellClassName}>{choice.comment}</TableCell>
+                  <TableCell className={compactCellClassName}>{formatAmount(choice.amount, choice.currency)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
           <DialogFooter>
             <Button onClick={confirmResolve} disabled={!chosenId}>
               Confirm
