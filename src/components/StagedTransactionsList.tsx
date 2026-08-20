@@ -173,6 +173,7 @@ export function StagedTransactionsList({ api, cashAccountIds, cardAccountIds, pa
                 <TableHead className={compactHeadClassName} />
                 <TableHead className={compactHeadClassName}>Account</TableHead>
                 <TableHead className={compactHeadClassName}>Description</TableHead>
+                <TableHead className={compactHeadClassName}>Date</TableHead>
                 <TableHead className={compactHeadClassName}>Amount</TableHead>
               </TableRow>
             </TableHeader>
@@ -195,6 +196,7 @@ export function StagedTransactionsList({ api, cashAccountIds, cardAccountIds, pa
                   </TableCell>
                   <TableCell className={compactCellClassName}>{choice.accountName}</TableCell>
                   <TableCell className={compactCellClassName}>{choice.comment}</TableCell>
+                  <TableCell className={compactCellClassName}>{new Date(choice.date).toISOString().slice(0, 10)}</TableCell>
                   <TableCell className={compactCellClassName}>{formatAmount(choice.amount, choice.currency)}</TableCell>
                 </TableRow>
               ))}

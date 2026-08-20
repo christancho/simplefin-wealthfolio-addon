@@ -112,9 +112,12 @@ describe('StagedTransactionsList', () => {
     const table = within(dialog).getByRole('table');
     expect(within(table).getByRole('columnheader', { name: /account/i })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: /description/i })).toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: /date/i })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: /amount/i })).toBeInTheDocument();
     expect(within(table).getByText('Joint Checking')).toBeInTheDocument();
     expect(within(table).getByText('Personal Checking')).toBeInTheDocument();
+    expect(within(table).getByText('2026-07-31')).toBeInTheDocument();
+    expect(within(table).getByText('2026-07-30')).toBeInTheDocument();
     expect(within(table).getAllByText('$80.00')).toHaveLength(2);
 
     await userEvent.click(within(dialog).getByText(/bill pay a/i));
