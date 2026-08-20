@@ -24,7 +24,7 @@
     }
   },
   "network": {
-    "allowedHosts": ["bridge.simplefin.org"]
+    "allowedHosts": ["bridge.simplefin.org", "beta-bridge.simplefin.org"]
   },
   "hostDependencies": {
     "@tanstack/react-query": "^5.90.0",
