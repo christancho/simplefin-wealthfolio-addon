@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { createMockHost } from '../test/mockHost';
@@ -71,5 +71,31 @@ describe('AccountMapTable', () => {
     expect(bankAToggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Checking')).toBeInTheDocument();
     expect(screen.getByText('Savings')).toBeInTheDocument();
+  });
+
+  it('excludes a Wealthfolio account already mapped to a different SimpleFIN account', async () => {
+    const host = createMockHost();
+    render(
+      <AccountMapTable
+        api={host.api}
+        sfAccounts={[CHECKING, SAVINGS]}
+        wfAccounts={[
+          { id: 'WF-1', name: 'My Checking' },
+          { id: 'WF-2', name: 'My Savings' },
+        ] as never}
+        mappings={[
+          { sfAccountId: 'ACT-1', wfAccountId: 'WF-1', mode: 'CASH', sfAccountName: 'Checking', orgName: 'Bank A' },
+        ]}
+        onChange={vi.fn()}
+        onAccountCreated={vi.fn()}
+      />,
+    );
+
+    const checkingSelect = screen.getByRole('combobox', { name: /map checking/i });
+    expect(within(checkingSelect).getByRole('option', { name: 'My Checking' })).toBeInTheDocument();
+
+    const savingsSelect = screen.getByRole('combobox', { name: /map savings/i });
+    expect(within(savingsSelect).queryByRole('option', { name: 'My Checking' })).not.toBeInTheDocument();
+    expect(within(savingsSelect).getByRole('option', { name: 'My Savings' })).toBeInTheDocument();
   });
 });

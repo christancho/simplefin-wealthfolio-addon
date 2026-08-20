@@ -62,6 +62,14 @@ export function AccountMapTable({
     return mappings.find((m) => m.sfAccountId === sfAccountId);
   }
 
+  /** A Wealthfolio account already mapped to a different SimpleFIN account is not a valid target. */
+  function availableWfAccounts(sfAccountId: string) {
+    const takenElsewhere = new Set(
+      mappings.filter((m) => m.sfAccountId !== sfAccountId).map((m) => m.wfAccountId),
+    );
+    return wfAccounts.filter((a) => !takenElsewhere.has(a.id));
+  }
+
   function upsertMapping(sfAccount: SfAccount, wfAccountId: string) {
     const existing = mappingFor(sfAccount.id);
     const next: AccountMapping = {
@@ -151,7 +159,7 @@ export function AccountMapTable({
                             onChange={(e) => handleSelectChange(sfAccount, e.target.value)}
                           >
                             <option value="">Unmapped</option>
-                            {wfAccounts.map((wfAccount) => (
+                            {availableWfAccounts(sfAccount.id).map((wfAccount) => (
                               <option key={wfAccount.id} value={wfAccount.id}>
                                 {wfAccount.name}
                               </option>
