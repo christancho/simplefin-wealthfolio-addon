@@ -153,10 +153,10 @@ export function StagedTransactionsList({
       <Table aria-label="Staged transactions">
         <TableHeader>
           <TableRow>
-            <TableHead className={compactHeadClassName}>Amount</TableHead>
-            <TableHead className={compactHeadClassName}>Comment</TableHead>
             <TableHead className={compactHeadClassName}>Date</TableHead>
+            <TableHead className={compactHeadClassName}>Comment</TableHead>
             <TableHead className={compactHeadClassName}>Status</TableHead>
+            <TableHead className={compactHeadClassName}>Amount</TableHead>
             <TableHead className={compactHeadClassName}>Action</TableHead>
           </TableRow>
         </TableHeader>
@@ -172,10 +172,10 @@ export function StagedTransactionsList({
                 </TableRow>
                 {group.map((candidate) => (
                   <TableRow key={candidate.sfTransactionId}>
-                    <TableCell className={compactCellClassName}>{formatAmount(candidate.amount, candidate.currency)}</TableCell>
-                    <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
                     <TableCell className={compactCellClassName}>{candidate.postedDate}</TableCell>
+                    <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
                     <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
+                    <TableCell className={compactCellClassName}>{formatAmount(candidate.amount, candidate.currency)}</TableCell>
                     <TableCell className={compactCellClassName}>
                       <div className="flex gap-2">
                         {candidate.status === 'ambiguous' && (

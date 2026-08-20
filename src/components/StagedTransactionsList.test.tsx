@@ -68,6 +68,16 @@ describe('StagedTransactionsList', () => {
     expect(screen.getByText('2026-08-02')).toBeInTheDocument();
   });
 
+  it('orders the staged table columns as date, comment, status, amount, action', async () => {
+    const host = createMockHost();
+    await writeStaging(host.api, [pending]);
+
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
+
+    const headers = await screen.findAllByRole('columnheader');
+    expect(headers.map((h) => h.textContent)).toEqual(['Date', 'Comment', 'Status', 'Amount', 'Action']);
+  });
+
   it('groups staged candidates under a header naming each credit-card account', async () => {
     const host = createMockHost();
     await writeStaging(host.api, [
