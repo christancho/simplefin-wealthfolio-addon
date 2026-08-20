@@ -109,9 +109,9 @@ Full design and rationale:
 **Claiming a setup token fails with a broker rejection.** A setup token is
 base64 of a claim URL, and the addon POSTs to whatever host that URL names.
 The network broker refuses any host not listed in `manifest.json` →
-`network.allowedHosts`, which declares `bridge.simplefin.org` and
-`beta-bridge.simplefin.org`. A token issued by a Bridge on some other host —
-a self-hosted or white-label deployment — is rejected by the broker before
+`network.allowedHosts`, which declares `bridge.simplefin.org` (production).
+A token issued by a Bridge on some other host — SimpleFIN's demo/beta Bridge,
+a self-hosted, or white-label deployment — is rejected by the broker before
 any request goes out. That is a manifest allowlist problem, not a code
 problem: add the host to `allowedHosts` and rebuild.
 
