@@ -54,7 +54,7 @@ describe('StagedTransactionsList', () => {
     expect(await screen.findByText(/storage unavailable/i)).toBeInTheDocument();
   });
 
-  it('lists pending and ambiguous candidates with their amount and comment', async () => {
+  it('lists pending and ambiguous candidates with their amount, date and comment', async () => {
     const host = createMockHost();
     await writeStaging(host.api, [pending, ambiguous]);
 
@@ -62,8 +62,10 @@ describe('StagedTransactionsList', () => {
 
     expect(await screen.findByText('$50.00')).toBeInTheDocument();
     expect(screen.getByText('Online Payment Thank You')).toBeInTheDocument();
+    expect(screen.getByText('2026-08-01')).toBeInTheDocument();
     expect(screen.getByText('$80.00')).toBeInTheDocument();
     expect(screen.getByText('Autopay')).toBeInTheDocument();
+    expect(screen.getByText('2026-08-02')).toBeInTheDocument();
   });
 
   it('groups staged candidates under a header naming each credit-card account', async () => {

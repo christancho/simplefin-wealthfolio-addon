@@ -19,7 +19,7 @@ import { describeWithdrawals, findBackfillCandidates, resolveAmbiguous, runRecon
 import { readStaging, writeStaging, type StagedCandidate } from '../lib/storage/staging';
 import { compactCellClassName, compactHeadClassName } from './tableStyle';
 
-const COLUMN_COUNT = 4;
+const COLUMN_COUNT = 5;
 
 /** Groups candidates by credit-card account, preserving first-seen order. */
 function groupByCardAccount(candidates: StagedCandidate[]): [string, StagedCandidate[]][] {
@@ -155,6 +155,7 @@ export function StagedTransactionsList({
           <TableRow>
             <TableHead className={compactHeadClassName}>Amount</TableHead>
             <TableHead className={compactHeadClassName}>Comment</TableHead>
+            <TableHead className={compactHeadClassName}>Date</TableHead>
             <TableHead className={compactHeadClassName}>Status</TableHead>
             <TableHead className={compactHeadClassName}>Action</TableHead>
           </TableRow>
@@ -173,6 +174,7 @@ export function StagedTransactionsList({
                   <TableRow key={candidate.sfTransactionId}>
                     <TableCell className={compactCellClassName}>{formatAmount(candidate.amount, candidate.currency)}</TableCell>
                     <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
+                    <TableCell className={compactCellClassName}>{candidate.postedDate}</TableCell>
                     <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
                     <TableCell className={compactCellClassName}>
                       <div className="flex gap-2">
