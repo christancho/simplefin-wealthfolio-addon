@@ -1,4 +1,4 @@
-import type { ActivityDetails, HostAPI } from '@wealthfolio/addon-sdk';
+import type { Account, ActivityDetails, HostAPI } from '@wealthfolio/addon-sdk';
 import {
   Button,
   Dialog,
@@ -12,23 +12,47 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  formatAmount,
 } from '@wealthfolio/ui';
-import { useEffect, useState } from 'react';
-import { describeWithdrawals, resolveAmbiguous } from '../lib/sync/reconciliation';
+import { Fragment, useEffect, useState } from 'react';
+import { describeWithdrawals, findBackfillCandidates, resolveAmbiguous, runReconciliation } from '../lib/sync/reconciliation';
 import { readStaging, writeStaging, type StagedCandidate } from '../lib/storage/staging';
 import { compactCellClassName, compactHeadClassName } from './tableStyle';
+
+const COLUMN_COUNT = 5;
+
+/** Groups candidates by credit-card account, preserving first-seen order. */
+function groupByCardAccount(candidates: StagedCandidate[]): [string, StagedCandidate[]][] {
+  const groups = new Map<string, StagedCandidate[]>();
+  for (const candidate of candidates) {
+    const group = groups.get(candidate.cardAccountId) ?? [];
+    group.push(candidate);
+    groups.set(candidate.cardAccountId, group);
+  }
+  return [...groups.entries()];
+}
 
 export interface StagedTransactionsListProps {
   api: HostAPI;
   cashAccountIds: string[];
+  cardAccountIds: string[];
+  paymentKeywords: string[];
+  wfAccounts: Account[];
 }
 
-export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactionsListProps) {
+export function StagedTransactionsList({
+  api,
+  cashAccountIds,
+  cardAccountIds,
+  paymentKeywords,
+  wfAccounts,
+}: StagedTransactionsListProps) {
   const [candidates, setCandidates] = useState<StagedCandidate[] | null>(null);
   const [resolving, setResolving] = useState<StagedCandidate | null>(null);
   const [choices, setChoices] = useState<ActivityDetails[]>([]);
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   async function load() {
     try {
@@ -77,12 +101,45 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
     }
   }
 
+  async function scanForOlderPayments() {
+    setError(null);
+    setScanning(true);
+    try {
+      const existing = await readStaging(api);
+      const found = await findBackfillCandidates(api, cardAccountIds, paymentKeywords, existing);
+      const { candidates: remaining } = await runReconciliation(
+        api,
+        [...existing, ...found],
+        cashAccountIds,
+        Math.floor(Date.now() / 1000),
+      );
+      setCandidates(remaining);
+      await writeStaging(api, remaining);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  const scanButton = (
+    <Button size="sm" variant="outline" onClick={scanForOlderPayments} disabled={scanning}>
+      {scanning ? 'Scanning…' : 'Scan for older payments'}
+    </Button>
+  );
+
   if (candidates === null) {
-    return error ? <p className="text-destructive text-sm">{error}</p> : null;
+    return (
+      <>
+        {scanButton}
+        {error && <p className="text-destructive text-sm">{error}</p>}
+      </>
+    );
   }
   if (candidates.length === 0) {
     return (
       <>
+        {scanButton}
         {error && <p className="text-destructive text-sm">{error}</p>}
         <p className="text-muted-foreground text-sm">No staged transactions.</p>
       </>
@@ -91,36 +148,51 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
 
   return (
     <>
+      {scanButton}
       {error && <p className="text-destructive text-sm">{error}</p>}
       <Table aria-label="Staged transactions">
         <TableHeader>
           <TableRow>
-            <TableHead className={compactHeadClassName}>Amount</TableHead>
+            <TableHead className={compactHeadClassName}>Date</TableHead>
             <TableHead className={compactHeadClassName}>Comment</TableHead>
             <TableHead className={compactHeadClassName}>Status</TableHead>
+            <TableHead className={compactHeadClassName}>Amount</TableHead>
             <TableHead className={compactHeadClassName}>Action</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {candidates.map((candidate) => (
-            <TableRow key={candidate.sfTransactionId}>
-              <TableCell className={compactCellClassName}>{candidate.amount}</TableCell>
-              <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
-              <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
-              <TableCell className={compactCellClassName}>
-                <div className="flex gap-2">
-                  {candidate.status === 'ambiguous' && (
-                    <Button size="sm" onClick={() => openResolve(candidate)}>
-                      Resolve
-                    </Button>
-                  )}
-                  <Button size="sm" variant="outline" onClick={() => dismiss(candidate)}>
-                    Dismiss
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
+          {groupByCardAccount(candidates).map(([cardAccountId, group]) => {
+            const accountName = wfAccounts.find((a) => a.id === cardAccountId)?.name ?? cardAccountId;
+            return (
+              <Fragment key={cardAccountId}>
+                <TableRow>
+                  <TableCell className={compactCellClassName} colSpan={COLUMN_COUNT}>
+                    {`${accountName} (${group.length})`}
+                  </TableCell>
+                </TableRow>
+                {group.map((candidate) => (
+                  <TableRow key={candidate.sfTransactionId}>
+                    <TableCell className={compactCellClassName}>{candidate.postedDate}</TableCell>
+                    <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
+                    <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
+                    <TableCell className={compactCellClassName}>{formatAmount(candidate.amount, candidate.currency)}</TableCell>
+                    <TableCell className={compactCellClassName}>
+                      <div className="flex gap-2">
+                        {candidate.status === 'ambiguous' && (
+                          <Button size="sm" onClick={() => openResolve(candidate)}>
+                            Resolve
+                          </Button>
+                        )}
+                        <Button size="sm" variant="outline" onClick={() => dismiss(candidate)}>
+                          Dismiss
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </Fragment>
+            );
+          })}
         </TableBody>
       </Table>
       <Dialog open={resolving !== null} onOpenChange={(open) => !open && setResolving(null)}>
@@ -129,20 +201,41 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
             <DialogTitle>Pick the matching withdrawal</DialogTitle>
           </DialogHeader>
           {error && <p className="text-destructive text-sm">{error}</p>}
-          <div className="space-y-2">
-            {choices.map((choice) => (
-              <label key={choice.id} className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="withdrawal-choice"
-                  value={choice.id}
-                  checked={chosenId === choice.id}
-                  onChange={() => setChosenId(choice.id)}
-                />
-                {choice.comment} — {choice.amount}
-              </label>
-            ))}
-          </div>
+          <Table aria-label="Matching withdrawals">
+            <TableHeader>
+              <TableRow>
+                <TableHead className={compactHeadClassName} />
+                <TableHead className={compactHeadClassName}>Account</TableHead>
+                <TableHead className={compactHeadClassName}>Description</TableHead>
+                <TableHead className={compactHeadClassName}>Date</TableHead>
+                <TableHead className={compactHeadClassName}>Amount</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {choices.map((choice) => (
+                <TableRow
+                  key={choice.id}
+                  className="cursor-pointer"
+                  onClick={() => setChosenId(choice.id)}
+                >
+                  <TableCell className={compactCellClassName}>
+                    <input
+                      type="radio"
+                      name="withdrawal-choice"
+                      value={choice.id}
+                      checked={chosenId === choice.id}
+                      onChange={() => setChosenId(choice.id)}
+                      aria-label={`Select ${choice.accountName} — ${choice.comment}`}
+                    />
+                  </TableCell>
+                  <TableCell className={compactCellClassName}>{choice.accountName}</TableCell>
+                  <TableCell className={compactCellClassName}>{choice.comment}</TableCell>
+                  <TableCell className={compactCellClassName}>{new Date(choice.date).toISOString().slice(0, 10)}</TableCell>
+                  <TableCell className={compactCellClassName}>{formatAmount(choice.amount, choice.currency)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
           <DialogFooter>
             <Button onClick={confirmResolve} disabled={!chosenId}>
               Confirm

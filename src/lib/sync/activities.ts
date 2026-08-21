@@ -61,6 +61,7 @@ export function detectCandidate(
   txn: SfTransaction,
   mapping: AccountMapping,
   paymentKeywords: string[],
+  currency: string,
 ): StagedCandidate | null {
   const text = txn.payee || txn.description;
   if (!isPaymentCandidate(text, paymentKeywords)) return null;
@@ -70,6 +71,7 @@ export function detectCandidate(
     cardAccountId: mapping.wfAccountId,
     cardActivityId: null,
     amount: txn.amount.trim().replace(/^-/, ''),
+    currency,
     postedDate: isoDate(txn.posted),
     comment: text,
     status: 'pending',
@@ -185,7 +187,7 @@ export async function syncCashAccount(
     accountType === 'CREDIT_CARD'
       ? importableTxns
           .filter((t) => !t.amount.trim().startsWith('-'))
-          .map((t) => detectCandidate(t, mapping, paymentKeywords))
+          .map((t) => detectCandidate(t, mapping, paymentKeywords, sfAccount.currency))
           .filter((c): c is StagedCandidate => c !== null)
       : [];
 

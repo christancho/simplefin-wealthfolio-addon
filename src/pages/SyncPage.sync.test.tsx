@@ -173,6 +173,36 @@ describe('SyncPage sync trigger', () => {
     expect(await within(resultsTable).findByText(/simplefin 150\.00 vs wealthfolio 100/i)).toBeInTheDocument();
   });
 
+  it('shows a loading spinner on the Accounts tab while accounts are being fetched', async () => {
+    const host = createMockHost();
+    seedConfig(host, [CHECKING_MAPPING]);
+
+    let resolveRequest!: (value: { status: number; headers: Record<string, string>; body: string }) => void;
+    const pending = new Promise<{ status: number; headers: Record<string, string>; body: string }>((resolve) => {
+      resolveRequest = resolve;
+    });
+    host.api.network.request = vi.fn(() => pending) as never;
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', name: 'My Checking', balance: 100 }] as never);
+
+    render(<SyncPage api={host.api} />);
+
+    expect(await screen.findByText(/loading accounts/i)).toBeInTheDocument();
+
+    resolveRequest({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        accounts: [
+          { id: 'ACT-1', name: 'Checking', currency: 'USD', balance: '100.00', 'balance-date': 1700000000, org: { name: 'Bank A' }, transactions: [] },
+        ],
+        errors: [],
+      }),
+    });
+
+    await screen.findByText('Checking');
+    expect(screen.queryByText(/loading accounts/i)).not.toBeInTheDocument();
+  });
+
   it('disables the sync button while a run is in flight', async () => {
     const host = createMockHost();
     seedConfig(host, [CHECKING_MAPPING]);
@@ -301,6 +331,7 @@ describe('SyncPage sync trigger', () => {
           cardAccountId: 'WF-CARD',
           cardActivityId: null,
           amount: '50.00',
+          currency: 'USD',
           postedDate: '2026-08-01',
           comment: 'Online Payment Thank You',
           status: 'pending',
@@ -348,6 +379,7 @@ describe('SyncPage sync trigger', () => {
           cardAccountId: 'WF-CARD',
           cardActivityId: null,
           amount: '25.00',
+          currency: 'USD',
           postedDate: new Date().toISOString().slice(0, 10),
           comment: 'Autopay',
           status: 'pending',

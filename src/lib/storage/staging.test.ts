@@ -7,6 +7,7 @@ const candidate = (over: Partial<StagedCandidate> = {}): StagedCandidate => ({
   cardAccountId: 'WF-CARD',
   cardActivityId: null,
   amount: '50.00',
+  currency: 'USD',
   postedDate: '2026-08-01',
   comment: 'ONLINE PAYMENT THANK YOU',
   status: 'pending',

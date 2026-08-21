@@ -95,12 +95,14 @@ describe('detectCandidate', () => {
       txn({ id: 'TXN-9', amount: '75.00', payee: 'Online Payment Thank You', posted: 1754438400 }) as never,
       mapping,
       ['PAYMENT'],
+      'USD',
     );
     expect(candidate).toEqual({
       sfTransactionId: 'TXN-9',
       cardAccountId: 'WF-1',
       cardActivityId: null,
       amount: '75.00',
+      currency: 'USD',
       postedDate: '2025-08-06',
       comment: 'Online Payment Thank You',
       status: 'pending',
@@ -109,7 +111,7 @@ describe('detectCandidate', () => {
   });
 
   it('returns null for a transaction that does not match any keyword', () => {
-    expect(detectCandidate(txn({ payee: 'Amazon Refund' }) as never, mapping, ['PAYMENT'])).toBeNull();
+    expect(detectCandidate(txn({ payee: 'Amazon Refund' }) as never, mapping, ['PAYMENT'], 'USD')).toBeNull();
   });
 });
 

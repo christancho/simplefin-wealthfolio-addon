@@ -1,5 +1,6 @@
 import type { ActivityDetails, ActivityUpdate, HostAPI } from '@wealthfolio/addon-sdk';
 import type { StagedCandidate } from '../storage/staging';
+import { isPaymentCandidate } from './activities';
 import { normalise } from './balance';
 
 /**
@@ -105,6 +106,54 @@ export async function describeWithdrawals(
   return withdrawals.filter((w) => ids.includes(w.id));
 }
 
+/** True if `row` is already represented in `existing`, resolved or not — never stage it twice. */
+function isAlreadyStaged(row: ActivityDetails, existing: StagedCandidate[]): boolean {
+  return existing.some((c) =>
+    c.cardActivityId
+      ? c.cardActivityId === row.id
+      : c.cardAccountId === row.accountId &&
+        normalise(c.amount) === normalise(row.amount ?? '0') &&
+        c.postedDate === toIsoDateOnly(row.date) &&
+        c.comment === (row.comment ?? ''),
+  );
+}
+
+/**
+ * Scans already-imported `CREDIT` activities on the given card accounts for
+ * ones that look like bill payments but were never staged — either because
+ * they predate this feature, or because the sync that imported them ran
+ * before detection existed. Unlike live detection, the Wealthfolio activity
+ * already exists, so `cardActivityId` is known immediately; no fuzzy lookup
+ * is needed later. See `StagedCandidate.backfilled` for why these are exempt
+ * from the normal expiry sweep.
+ */
+export async function findBackfillCandidates(
+  api: HostAPI,
+  cardAccountIds: string[],
+  paymentKeywords: string[],
+  existingStaging: StagedCandidate[],
+): Promise<StagedCandidate[]> {
+  if (cardAccountIds.length === 0) return [];
+
+  const rows = await searchAllByType(api, cardAccountIds, 'CREDIT');
+
+  return rows
+    .filter((row) => isPaymentCandidate(row.comment ?? '', paymentKeywords))
+    .filter((row) => !isAlreadyStaged(row, existingStaging))
+    .map((row) => ({
+      sfTransactionId: row.id,
+      cardAccountId: row.accountId,
+      cardActivityId: row.id,
+      amount: row.amount ?? '0',
+      currency: row.currency,
+      postedDate: toIsoDateOnly(row.date),
+      comment: row.comment ?? '',
+      status: 'pending' as const,
+      candidateWithdrawalIds: [],
+      backfilled: true,
+    }));
+}
+
 function toUpdate(row: ActivityDetails, activityType: string): ActivityUpdate {
   return {
     id: row.id,
@@ -178,7 +227,7 @@ export async function runReconciliation(
   const active: StagedCandidate[] = [];
   for (const candidate of candidates) {
     const postedSeconds = Date.parse(candidate.postedDate) / 1000;
-    if (nowSeconds - postedSeconds > EXPIRY_DAYS * SECONDS_PER_DAY) {
+    if (!candidate.backfilled && nowSeconds - postedSeconds > EXPIRY_DAYS * SECONDS_PER_DAY) {
       expired += 1;
       continue;
     }

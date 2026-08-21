@@ -76,3 +76,13 @@ export function cashAccountIdsFrom(
     .filter((m) => m.mode === 'CASH' && accountTypeOf(m.wfAccountId) !== 'CREDIT_CARD')
     .map((m) => m.wfAccountId);
 }
+
+/** The credit-card counterpart of {@link cashAccountIdsFrom}, for scanning card-side activities. */
+export function cardAccountIdsFrom(
+  mappings: AccountMapping[],
+  accountTypeOf: (wfAccountId: string) => AccountType | undefined,
+): string[] {
+  return mappings
+    .filter((m) => m.mode === 'CASH' && accountTypeOf(m.wfAccountId) === 'CREDIT_CARD')
+    .map((m) => m.wfAccountId);
+}
