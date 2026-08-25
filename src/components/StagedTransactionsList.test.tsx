@@ -59,6 +59,30 @@ describe('StagedTransactionsList', () => {
     expect(screen.getByText('Autopay')).toBeInTheDocument();
   });
 
+  it('labels a card-payment candidate and a cash-transfer candidate distinctly', async () => {
+    const host = createMockHost();
+    const transfer: StagedCandidate = {
+      sfTransactionId: 'TXN-3',
+      inflowAccountId: 'WF-SAVINGS',
+      inflowActivityId: null,
+      inflowActivityType: 'DEPOSIT',
+      amount: '200.00',
+      postedDate: '2026-08-03',
+      comment: 'Online Transfer From Checking',
+      status: 'pending',
+      candidateWithdrawalIds: [],
+    };
+    await writeStaging(host.api, [pending, transfer]);
+
+    render(<StagedTransactionsList api={host.api} cashAccountIds={['WF-CASH']} />);
+
+    const cardRow = (await screen.findByText('Online Payment Thank You')).closest('tr') as HTMLElement;
+    expect(within(cardRow).getByText('Card payment')).toBeInTheDocument();
+
+    const transferRow = (await screen.findByText('Online Transfer From Checking')).closest('tr') as HTMLElement;
+    expect(within(transferRow).getByText('Cash transfer')).toBeInTheDocument();
+  });
+
   it('dismisses a pending candidate without calling the host activities API', async () => {
     const host = createMockHost();
     await writeStaging(host.api, [pending]);

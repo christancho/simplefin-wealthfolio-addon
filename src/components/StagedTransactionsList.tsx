@@ -18,6 +18,10 @@ import { describeWithdrawals, resolveAmbiguous } from '../lib/sync/reconciliatio
 import { readStaging, writeStaging, type StagedCandidate } from '../lib/storage/staging';
 import { compactCellClassName, compactHeadClassName } from './tableStyle';
 
+function candidateTypeLabel(candidate: StagedCandidate): string {
+  return candidate.inflowActivityType === 'DEPOSIT' ? 'Cash transfer' : 'Card payment';
+}
+
 export interface StagedTransactionsListProps {
   api: HostAPI;
   cashAccountIds: string[];
@@ -97,6 +101,7 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
           <TableRow>
             <TableHead className={compactHeadClassName}>Amount</TableHead>
             <TableHead className={compactHeadClassName}>Comment</TableHead>
+            <TableHead className={compactHeadClassName}>Type</TableHead>
             <TableHead className={compactHeadClassName}>Status</TableHead>
             <TableHead className={compactHeadClassName}>Action</TableHead>
           </TableRow>
@@ -106,6 +111,7 @@ export function StagedTransactionsList({ api, cashAccountIds }: StagedTransactio
             <TableRow key={candidate.sfTransactionId}>
               <TableCell className={compactCellClassName}>{candidate.amount}</TableCell>
               <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
+              <TableCell className={compactCellClassName}>{candidateTypeLabel(candidate)}</TableCell>
               <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
               <TableCell className={compactCellClassName}>
                 <div className="flex gap-2">
