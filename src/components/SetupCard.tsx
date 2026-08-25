@@ -15,7 +15,7 @@ import { useState } from 'react';
 import { AUTH_SECRET_KEY } from '../lib/simplefin/client';
 import { claimSetupToken } from '../lib/simplefin/claim';
 import { splitAccessUrl } from '../lib/simplefin/url';
-import { DEFAULT_LOOKBACK_DAYS, DEFAULT_PAYMENT_KEYWORDS, writeConfig } from '../lib/storage/config';
+import { DEFAULT_LOOKBACK_DAYS, DEFAULT_PAYMENT_KEYWORDS, DEFAULT_TRANSFER_KEYWORDS, writeConfig } from '../lib/storage/config';
 
 export interface SetupCardProps {
   api: HostAPI;
@@ -34,7 +34,13 @@ export function SetupCard({ api, onConnected }: SetupCardProps) {
       const accessUrl = await claimSetupToken(api.network, token);
       const { baseUrl, basicAuthSecret } = splitAccessUrl(accessUrl);
       await api.secrets.set(AUTH_SECRET_KEY, basicAuthSecret);
-      await writeConfig(api, { baseUrl, mappings: [], lookbackDays: DEFAULT_LOOKBACK_DAYS, paymentKeywords: DEFAULT_PAYMENT_KEYWORDS });
+      await writeConfig(api, {
+        baseUrl,
+        mappings: [],
+        lookbackDays: DEFAULT_LOOKBACK_DAYS,
+        paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
+        transferKeywords: DEFAULT_TRANSFER_KEYWORDS,
+      });
       onConnected();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

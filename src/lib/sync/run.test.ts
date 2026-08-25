@@ -26,6 +26,7 @@ const config: SyncConfig = {
   ],
   lookbackDays: 30,
   paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
+  transferKeywords: ['TRANSFER', 'XFER'],
 };
 
 const bridgePayload = {
@@ -286,6 +287,7 @@ describe('runSync', () => {
       ],
       lookbackDays: 30,
       paymentKeywords: ['PAYMENT'],
+      transferKeywords: ['TRANSFER', 'XFER'],
     };
 
     await runSync(host.api, cardConfig);
@@ -388,6 +390,7 @@ describe('runSync', () => {
       ],
       lookbackDays: 30,
       paymentKeywords: ['PAYMENT'],
+      transferKeywords: ['TRANSFER', 'XFER'],
     };
 
     await runSync(host.api, cardConfig);
@@ -425,6 +428,7 @@ describe('runSync', () => {
       mappings: [],
       lookbackDays: 30,
       paymentKeywords: ['PAYMENT'],
+      transferKeywords: ['TRANSFER', 'XFER'],
     });
 
     const staged = await readStaging(host.api);
@@ -470,6 +474,7 @@ describe('runSync opening-balance backfill', () => {
     ],
     lookbackDays: 30,
     paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
+    transferKeywords: ['TRANSFER', 'XFER'],
   };
 
   function backfillHost(sfBalance: string, transactions: unknown[]) {

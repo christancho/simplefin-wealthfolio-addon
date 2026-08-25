@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { createMockHost } from '../test/mockHost';
 import { AUTH_SECRET_KEY } from '../lib/simplefin/client';
-import { DEFAULT_LOOKBACK_DAYS, DEFAULT_PAYMENT_KEYWORDS } from '../lib/storage/config';
+import { DEFAULT_LOOKBACK_DAYS, DEFAULT_PAYMENT_KEYWORDS, DEFAULT_TRANSFER_KEYWORDS } from '../lib/storage/config';
 import { SettingsPanel } from './SettingsPanel';
 
 const BASE_URL = 'https://bridge.simplefin.org/simplefin';
@@ -59,6 +59,7 @@ describe('SettingsPanel', () => {
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
       paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
+      transferKeywords: DEFAULT_TRANSFER_KEYWORDS,
     });
     expect(onDisconnected).toHaveBeenCalled();
   });
