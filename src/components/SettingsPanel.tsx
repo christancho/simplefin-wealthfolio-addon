@@ -32,6 +32,8 @@ export interface SettingsPanelProps {
   onLookbackDaysChange: (days: number) => void;
   paymentKeywords: string[];
   onPaymentKeywordsChange: (keywords: string[]) => void;
+  transferKeywords: string[];
+  onTransferKeywordsChange: (keywords: string[]) => void;
   onDisconnected: () => void;
 }
 
@@ -54,12 +56,15 @@ export function SettingsPanel({
   onLookbackDaysChange,
   paymentKeywords,
   onPaymentKeywordsChange,
+  transferKeywords,
+  onTransferKeywordsChange,
   onDisconnected,
 }: SettingsPanelProps) {
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lookbackDraft, setLookbackDraft] = useState(String(lookbackDays));
-  const [keywordsDraft, setKeywordsDraft] = useState(paymentKeywords.join(', '));
+  const [paymentKeywordsDraft, setPaymentKeywordsDraft] = useState(paymentKeywords.join(', '));
+  const [transferKeywordsDraft, setTransferKeywordsDraft] = useState(transferKeywords.join(', '));
 
   async function handleDisconnect() {
     setError(null);
@@ -78,8 +83,12 @@ export function SettingsPanel({
     onLookbackDaysChange(Number(lookbackDraft));
   }
 
-  function handleSaveKeywords() {
-    onPaymentKeywordsChange(parseKeywords(keywordsDraft));
+  function handleSavePaymentKeywords() {
+    onPaymentKeywordsChange(parseKeywords(paymentKeywordsDraft));
+  }
+
+  function handleSaveTransferKeywords() {
+    onTransferKeywordsChange(parseKeywords(transferKeywordsDraft));
   }
 
   return (
@@ -169,14 +178,43 @@ export function SettingsPanel({
               <Input
                 id="payment-keywords"
                 className="w-full"
-                value={keywordsDraft}
-                onChange={(e) => setKeywordsDraft(e.target.value)}
+                value={paymentKeywordsDraft}
+                onChange={(e) => setPaymentKeywordsDraft(e.target.value)}
               />
               <Button
-                onClick={handleSaveKeywords}
-                disabled={parseKeywords(keywordsDraft).join(',') === paymentKeywords.join(',')}
+                onClick={handleSavePaymentKeywords}
+                disabled={parseKeywords(paymentKeywordsDraft).join(',') === paymentKeywords.join(',')}
               >
                 Save keywords
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Transfer detection</CardTitle>
+          <CardDescription>
+            A deposit into a mapped cash account whose payee or comment contains any of these
+            (case-insensitive) is staged as a possible internal transfer for reconciliation against
+            a matching withdrawal in another mapped cash account.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="transfer-keywords">Transfer keywords (comma-separated)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="transfer-keywords"
+                className="w-full"
+                value={transferKeywordsDraft}
+                onChange={(e) => setTransferKeywordsDraft(e.target.value)}
+              />
+              <Button
+                onClick={handleSaveTransferKeywords}
+                disabled={parseKeywords(transferKeywordsDraft).join(',') === transferKeywords.join(',')}
+              >
+                Save transfer keywords
               </Button>
             </div>
           </div>

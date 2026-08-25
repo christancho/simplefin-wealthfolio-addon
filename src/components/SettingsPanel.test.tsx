@@ -13,6 +13,7 @@ function renderPanel(overrides: Partial<Parameters<typeof SettingsPanel>[0]> = {
   const onDisconnected = vi.fn();
   const onLookbackDaysChange = vi.fn();
   const onPaymentKeywordsChange = vi.fn();
+  const onTransferKeywordsChange = vi.fn();
   render(
     <SettingsPanel
       api={host.api}
@@ -21,11 +22,13 @@ function renderPanel(overrides: Partial<Parameters<typeof SettingsPanel>[0]> = {
       onLookbackDaysChange={onLookbackDaysChange}
       paymentKeywords={DEFAULT_PAYMENT_KEYWORDS}
       onPaymentKeywordsChange={onPaymentKeywordsChange}
+      transferKeywords={DEFAULT_TRANSFER_KEYWORDS}
+      onTransferKeywordsChange={onTransferKeywordsChange}
       onDisconnected={onDisconnected}
       {...overrides}
     />,
   );
-  return { host, onDisconnected, onLookbackDaysChange, onPaymentKeywordsChange };
+  return { host, onDisconnected, onLookbackDaysChange, onPaymentKeywordsChange, onTransferKeywordsChange };
 }
 
 describe('SettingsPanel', () => {
@@ -104,12 +107,12 @@ describe('SettingsPanel', () => {
     expect(onLookbackDaysChange).toHaveBeenCalledWith(90);
   });
 
-  it('shows the current keywords as a comma-separated list', () => {
+  it('shows the current payment keywords as a comma-separated list', () => {
     renderPanel({ paymentKeywords: ['PAYMENT', 'AUTOPAY'] });
     expect(screen.getByLabelText(/payment keywords/i)).toHaveValue('PAYMENT, AUTOPAY');
   });
 
-  it('disables Save until the keyword list actually changes', async () => {
+  it('disables the payment Save button until the keyword list actually changes', async () => {
     renderPanel({ paymentKeywords: ['PAYMENT'] });
     const input = screen.getByLabelText(/payment keywords/i);
     const save = screen.getByRole('button', { name: /^save keywords$/i });
@@ -119,7 +122,7 @@ describe('SettingsPanel', () => {
     expect(save).toBeEnabled();
   });
 
-  it('saves the comma-separated input as a trimmed keyword array', async () => {
+  it('saves the payment comma-separated input as a trimmed keyword array', async () => {
     const { onPaymentKeywordsChange } = renderPanel({ paymentKeywords: ['PAYMENT'] });
     const input = screen.getByLabelText(/payment keywords/i);
 
@@ -128,5 +131,31 @@ describe('SettingsPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /^save keywords$/i }));
 
     expect(onPaymentKeywordsChange).toHaveBeenCalledWith(['payment', 'autopay', 'thank you']);
+  });
+
+  it('shows the current transfer keywords as a comma-separated list', () => {
+    renderPanel({ transferKeywords: ['TRANSFER', 'XFER'] });
+    expect(screen.getByLabelText(/transfer keywords/i)).toHaveValue('TRANSFER, XFER');
+  });
+
+  it('disables the transfer Save button until the keyword list actually changes', async () => {
+    renderPanel({ transferKeywords: ['TRANSFER'] });
+    const input = screen.getByLabelText(/transfer keywords/i);
+    const save = screen.getByRole('button', { name: /^save transfer keywords$/i });
+
+    expect(save).toBeDisabled();
+    await userEvent.type(input, ', XFER');
+    expect(save).toBeEnabled();
+  });
+
+  it('saves the transfer comma-separated input as a trimmed keyword array', async () => {
+    const { onTransferKeywordsChange } = renderPanel({ transferKeywords: ['TRANSFER'] });
+    const input = screen.getByLabelText(/transfer keywords/i);
+
+    await userEvent.clear(input);
+    await userEvent.type(input, ' transfer ,  xfer ');
+    await userEvent.click(screen.getByRole('button', { name: /^save transfer keywords$/i }));
+
+    expect(onTransferKeywordsChange).toHaveBeenCalledWith(['transfer', 'xfer']);
   });
 });

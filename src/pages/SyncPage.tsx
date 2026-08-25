@@ -113,6 +113,19 @@ export function SyncPage({ api }: SyncPageProps) {
     }
   }
 
+  async function persistTransferKeywords(transferKeywords: string[]) {
+    if (!config) return;
+    const previous = config;
+    const next = { ...config, transferKeywords };
+    setConfig(next);
+    try {
+      await writeConfig(api, next);
+    } catch (err) {
+      setConfig(previous);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   if (!config) {
     return error ? (
       <Alert variant="destructive" role="alert">
@@ -202,6 +215,8 @@ export function SyncPage({ api }: SyncPageProps) {
               onLookbackDaysChange={persistLookbackDays}
               paymentKeywords={config.paymentKeywords}
               onPaymentKeywordsChange={persistPaymentKeywords}
+              transferKeywords={config.transferKeywords}
+              onTransferKeywordsChange={persistTransferKeywords}
               onDisconnected={loadConfig}
             />
           </TabsContent>
