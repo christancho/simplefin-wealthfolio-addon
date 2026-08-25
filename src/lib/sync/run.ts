@@ -102,6 +102,7 @@ async function syncOne(
   wfBalances: Map<string, string>,
   wfAccountTypes: Map<string, AccountType>,
   paymentKeywords: string[],
+  transferKeywords: string[],
 ): Promise<{ accountResult: AccountRunResult; candidates: StagedCandidate[] }> {
   const base: AccountRunResult = {
     sfAccountId: mapping.sfAccountId,
@@ -168,6 +169,7 @@ async function syncOne(
       watermark,
       wfAccountTypes.get(mapping.wfAccountId) ?? 'CASH',
       paymentKeywords,
+      transferKeywords,
     );
     await writeWatermark(api, mapping.wfAccountId, next);
 
@@ -277,6 +279,7 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
       wfBalances,
       wfAccountTypes,
       config.paymentKeywords,
+      config.transferKeywords,
     );
     results.push(accountResult);
     detectedCandidates.push(...candidates);

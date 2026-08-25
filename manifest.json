@@ -69,7 +69,7 @@
         { "name": "update", "isDeclared": true, "isDetected": false },
         { "name": "saveMany", "isDeclared": true, "isDetected": false }
       ],
-      "purpose": "Import cash transactions fetched from SimpleFIN, and reconcile credit-card payments into linked transfers."
+      "purpose": "Import cash transactions fetched from SimpleFIN, and reconcile credit-card payments and cash-to-cash transfers into linked transfers."
     },
     {
       "category": "snapshots",

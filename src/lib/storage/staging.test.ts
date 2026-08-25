@@ -4,8 +4,9 @@ import { readStaging, writeStaging, type StagedCandidate } from './staging';
 
 const candidate = (over: Partial<StagedCandidate> = {}): StagedCandidate => ({
   sfTransactionId: 'TXN-1',
-  cardAccountId: 'WF-CARD',
-  cardActivityId: null,
+  inflowAccountId: 'WF-CARD',
+  inflowActivityId: null,
+  inflowActivityType: 'CREDIT',
   amount: '50.00',
   postedDate: '2026-08-01',
   comment: 'ONLINE PAYMENT THANK YOU',
@@ -20,9 +21,17 @@ describe('staging', () => {
     expect(await readStaging(host.api)).toEqual([]);
   });
 
-  it('round-trips the staged candidate list', async () => {
+  it('round-trips the staged candidate list, including a cash-transfer (DEPOSIT) candidate', async () => {
     const host = createMockHost();
-    const candidates = [candidate(), candidate({ sfTransactionId: 'TXN-2', status: 'ambiguous', candidateWithdrawalIds: ['A-1', 'A-2'] })];
+    const candidates = [
+      candidate(),
+      candidate({
+        sfTransactionId: 'TXN-2',
+        inflowActivityType: 'DEPOSIT',
+        status: 'ambiguous',
+        candidateWithdrawalIds: ['A-1', 'A-2'],
+      }),
+    ];
     await writeStaging(host.api, candidates);
     expect(await readStaging(host.api)).toEqual(candidates);
   });

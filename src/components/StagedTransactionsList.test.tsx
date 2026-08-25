@@ -7,8 +7,9 @@ import { StagedTransactionsList } from './StagedTransactionsList';
 
 const pending: StagedCandidate = {
   sfTransactionId: 'TXN-1',
-  cardAccountId: 'WF-CARD',
-  cardActivityId: null,
+  inflowAccountId: 'WF-CARD',
+  inflowActivityId: null,
+  inflowActivityType: 'CREDIT',
   amount: '50.00',
   postedDate: '2026-08-01',
   comment: 'Online Payment Thank You',
@@ -18,8 +19,9 @@ const pending: StagedCandidate = {
 
 const ambiguous: StagedCandidate = {
   sfTransactionId: 'TXN-2',
-  cardAccountId: 'WF-CARD',
-  cardActivityId: 'CARD-ACT-2',
+  inflowAccountId: 'WF-CARD',
+  inflowActivityId: 'CARD-ACT-2',
+  inflowActivityType: 'CREDIT',
   amount: '80.00',
   postedDate: '2026-08-02',
   comment: 'Autopay',

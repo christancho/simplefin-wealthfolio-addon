@@ -2,14 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActivityDetails } from '@wealthfolio/addon-sdk';
 import { createMockHost } from '../../test/mockHost';
 import type { StagedCandidate } from '../storage/staging';
-import { describeWithdrawals, findCardActivity, resolveAmbiguous, runReconciliation } from './reconciliation';
+import { describeWithdrawals, findInflowActivity, resolveAmbiguous, runReconciliation } from './reconciliation';
 
 const NOW = 1754438400 + 5 * 86_400; // 5 days after the fixtures' posted date
 
 const candidate = (over: Partial<StagedCandidate> = {}): StagedCandidate => ({
   sfTransactionId: 'TXN-1',
-  cardAccountId: 'WF-CARD',
-  cardActivityId: null,
+  inflowAccountId: 'WF-CARD',
+  inflowActivityId: null,
+  inflowActivityType: 'CREDIT',
   amount: '50.00',
   postedDate: '2025-08-06',
   comment: 'Online Payment Thank You',
@@ -63,6 +64,68 @@ describe('runReconciliation', () => {
     });
   });
 
+  it('resolves a cash-to-cash transfer candidate (DEPOSIT inflow) the same way', async () => {
+    const host = createMockHost();
+    const depositActivity = cardActivity({
+      id: 'DEPOSIT-ACT-1',
+      accountId: 'WF-CASH-B',
+      activityType: 'DEPOSIT',
+      comment: 'Online Transfer From Checking',
+    });
+    const sourceWithdrawal = withdrawalActivity({ accountId: 'WF-CASH-A', comment: 'Online Transfer To Savings' });
+
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'DEPOSIT') return { data: [depositActivity], meta: { totalRowCount: 1 } };
+      return { data: [sourceWithdrawal], meta: { totalRowCount: 1 } };
+    }) as never;
+
+    const transferCandidate = candidate({
+      inflowAccountId: 'WF-CASH-B',
+      inflowActivityType: 'DEPOSIT',
+      comment: 'Online Transfer From Checking',
+    });
+
+    const { candidates, summary } = await runReconciliation(
+      host.api,
+      [transferCandidate],
+      ['WF-CASH-A', 'WF-CASH-B'],
+      NOW,
+    );
+
+    expect(candidates).toHaveLength(0);
+    expect(summary.resolved).toBe(1);
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'DEPOSIT-ACT-1', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
+  });
+
+  it("excludes a same-amount, in-window withdrawal sitting in the candidate's own inflow account", async () => {
+    const host = createMockHost();
+    const depositActivity = cardActivity({
+      id: 'DEPOSIT-ACT-1',
+      accountId: 'WF-CASH-B',
+      activityType: 'DEPOSIT',
+    });
+    // This withdrawal is in the SAME account the transfer landed in (WF-CASH-B) —
+    // it must never be treated as this candidate's own source leg.
+    const selfAccountWithdrawal = withdrawalActivity({ id: 'SELF-WD', accountId: 'WF-CASH-B' });
+
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'DEPOSIT') return { data: [depositActivity], meta: { totalRowCount: 1 } };
+      return { data: [selfAccountWithdrawal], meta: { totalRowCount: 1 } };
+    }) as never;
+
+    const transferCandidate = candidate({ inflowAccountId: 'WF-CASH-B', inflowActivityType: 'DEPOSIT' });
+
+    const { candidates } = await runReconciliation(host.api, [transferCandidate], ['WF-CASH-B'], NOW);
+
+    expect(candidates[0].status).toBe('pending');
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
+  });
+
   it('stays pending with zero withdrawal matches', async () => {
     const host = createMockHost();
     host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
@@ -74,7 +137,7 @@ describe('runReconciliation', () => {
 
     expect(candidates).toHaveLength(1);
     expect(candidates[0].status).toBe('pending');
-    expect(candidates[0].cardActivityId).toBe('CARD-ACT-1');
+    expect(candidates[0].inflowActivityId).toBe('CARD-ACT-1');
     expect(summary.resolved).toBe(0);
     expect(host.api.activities.saveMany).not.toHaveBeenCalled();
   });
@@ -144,7 +207,7 @@ describe('runReconciliation', () => {
       return { data: [withdrawalActivity()], meta: { totalRowCount: 1 } };
     }) as never;
 
-    const bad = candidate({ sfTransactionId: 'TXN-BAD', cardAccountId: 'WF-CARD-BAD' });
+    const bad = candidate({ sfTransactionId: 'TXN-BAD', inflowAccountId: 'WF-CARD-BAD' });
     const good = candidate({ sfTransactionId: 'TXN-GOOD' });
 
     const { candidates, summary } = await runReconciliation(host.api, [bad, good], ['WF-CASH'], NOW);
@@ -206,8 +269,8 @@ describe('runReconciliation', () => {
       return { data: [withdrawalActivity()], meta: { totalRowCount: 1 } };
     }) as never;
 
-    const first = candidate({ sfTransactionId: 'TXN-1', cardActivityId: 'CARD-ACT-1' });
-    const second = candidate({ sfTransactionId: 'TXN-2', cardActivityId: 'CARD-ACT-2' });
+    const first = candidate({ sfTransactionId: 'TXN-1', inflowActivityId: 'CARD-ACT-1' });
+    const second = candidate({ sfTransactionId: 'TXN-2', inflowActivityId: 'CARD-ACT-2' });
 
     const { candidates, summary } = await runReconciliation(host.api, [first, second], ['WF-CASH'], NOW);
 
@@ -254,24 +317,36 @@ describe('runReconciliation', () => {
   });
 });
 
-describe('findCardActivity', () => {
-  it('resolves by accountId/amount/date/comment when cardActivityId is unknown', async () => {
+describe('findInflowActivity', () => {
+  it('resolves by accountId/amount/date/comment when inflowActivityId is unknown', async () => {
     const host = createMockHost();
     host.api.activities.search = vi.fn(async () => ({ data: [cardActivity()], meta: { totalRowCount: 1 } })) as never;
 
-    const found = await findCardActivity(host.api, candidate());
+    const found = await findInflowActivity(host.api, candidate());
     expect(found?.id).toBe('CARD-ACT-1');
   });
 
-  it('resolves by id directly once cardActivityId is known', async () => {
+  it('resolves by id directly once inflowActivityId is known', async () => {
     const host = createMockHost();
     host.api.activities.search = vi.fn(async () => ({
       data: [cardActivity(), cardActivity({ id: 'OTHER', comment: 'different' })],
       meta: { totalRowCount: 2 },
     })) as never;
 
-    const found = await findCardActivity(host.api, candidate({ cardActivityId: 'OTHER' }));
+    const found = await findInflowActivity(host.api, candidate({ inflowActivityId: 'OTHER' }));
     expect(found?.id).toBe('OTHER');
+  });
+
+  it("searches by the candidate's own inflowActivityType, not a hardcoded CREDIT", async () => {
+    const host = createMockHost();
+    let requestedType: string | undefined;
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      requestedType = filters.activityTypes;
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    await findInflowActivity(host.api, candidate({ inflowActivityType: 'DEPOSIT' }));
+    expect(requestedType).toBe('DEPOSIT');
   });
 });
 
@@ -289,7 +364,7 @@ describe('describeWithdrawals', () => {
 });
 
 describe('resolveAmbiguous', () => {
-  it('reclassifies the chosen withdrawal and the resolved card activity', async () => {
+  it('reclassifies the chosen withdrawal and the resolved inflow activity', async () => {
     const host = createMockHost();
     host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
       if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
@@ -298,7 +373,7 @@ describe('resolveAmbiguous', () => {
 
     await resolveAmbiguous(
       host.api,
-      candidate({ status: 'ambiguous', cardActivityId: 'CARD-ACT-1', candidateWithdrawalIds: ['CASH-ACT-1', 'OTHER'] }),
+      candidate({ status: 'ambiguous', inflowActivityId: 'CARD-ACT-1', candidateWithdrawalIds: ['CASH-ACT-1', 'OTHER'] }),
       ['WF-CASH'],
       'CASH-ACT-1',
     );
@@ -319,7 +394,7 @@ describe('resolveAmbiguous', () => {
     }) as never;
 
     await expect(
-      resolveAmbiguous(host.api, candidate({ cardActivityId: 'CARD-ACT-1' }), ['WF-CASH'], 'GONE'),
+      resolveAmbiguous(host.api, candidate({ inflowActivityId: 'CARD-ACT-1' }), ['WF-CASH'], 'GONE'),
     ).rejects.toThrow(/GONE/);
   });
 });

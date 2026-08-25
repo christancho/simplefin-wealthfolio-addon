@@ -298,8 +298,9 @@ describe('SyncPage sync trigger', () => {
       JSON.stringify([
         {
           sfTransactionId: 'TXN-1',
-          cardAccountId: 'WF-CARD',
-          cardActivityId: null,
+          inflowAccountId: 'WF-CARD',
+          inflowActivityId: null,
+          inflowActivityType: 'CREDIT',
           amount: '50.00',
           postedDate: '2026-08-01',
           comment: 'Online Payment Thank You',
@@ -345,8 +346,9 @@ describe('SyncPage sync trigger', () => {
       JSON.stringify([
         {
           sfTransactionId: 'TXN-2',
-          cardAccountId: 'WF-CARD',
-          cardActivityId: null,
+          inflowAccountId: 'WF-CARD',
+          inflowActivityId: null,
+          inflowActivityType: 'CREDIT',
           amount: '25.00',
           postedDate: new Date().toISOString().slice(0, 10),
           comment: 'Autopay',
