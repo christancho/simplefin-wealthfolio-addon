@@ -40,6 +40,9 @@ shape the design below:
   update payload but came back `null` in the response and in every later
   read. The "visually link the pair via `sourceGroupId`" nice-to-have from
   the original issue does not work and is dropped from this design.
+  (Follow-up: this was true for `update()` specifically —
+  `docs/superpowers/specs/2026-08-26-sourcegroupid-transfer-linking-design.md`
+  later found the create path does persist it.)
 - **`import()`'s response is not a source of real activity ids.** It echoes
   back the submitted `ActivityImport` objects (including their synthetic
   preview ids), not the persisted `Activity` records. Real ids must come

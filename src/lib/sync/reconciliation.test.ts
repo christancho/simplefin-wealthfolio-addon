@@ -35,6 +35,8 @@ const cardActivity = (over: Partial<ActivityDetails> = {}): ActivityDetails =>
     amount: '50',
     currency: 'USD',
     comment: 'Online Payment Thank You',
+    fee: null,
+    subtype: null,
     ...over,
   }) as ActivityDetails;
 
@@ -47,6 +49,8 @@ const withdrawalActivity = (over: Partial<ActivityDetails> = {}): ActivityDetail
     amount: '50',
     currency: 'USD',
     comment: 'Bill Pay',
+    fee: null,
+    subtype: null,
     ...over,
   }) as ActivityDetails;
 
@@ -65,8 +69,28 @@ describe('runReconciliation', () => {
     expect(summary.resolved).toBe(1);
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
       creates: [
-        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-1' }),
-        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-1' }),
+        {
+          accountId: 'WF-CARD',
+          activityType: 'TRANSFER_IN',
+          activityDate: '2025-08-06T00:00:00+00:00',
+          amount: '50',
+          currency: 'USD',
+          comment: 'Online Payment Thank You',
+          fee: null,
+          subtype: null,
+          sourceGroupId: 'TXN-1',
+        },
+        {
+          accountId: 'WF-CASH',
+          activityType: 'TRANSFER_OUT',
+          activityDate: '2025-08-05T00:00:00+00:00',
+          amount: '50',
+          currency: 'USD',
+          comment: 'Bill Pay',
+          fee: null,
+          subtype: null,
+          sourceGroupId: 'TXN-1',
+        },
       ],
       deleteIds: ['CARD-ACT-1', 'CASH-ACT-1'],
     });
@@ -300,7 +324,7 @@ describe('runReconciliation', () => {
       updated: [],
       deleted: [],
       createdMappings: [],
-      errors: [{ id: 'CARD-ACT-1', action: 'update', message: 'row locked' }],
+      errors: [{ id: 'CARD-ACT-1', action: 'create', message: 'row locked' }],
     })) as never;
 
     const { candidates, summary } = await runReconciliation(host.api, [candidate()], ['WF-CASH'], NOW);

@@ -152,6 +152,9 @@ async function findBackfillCandidatesOfType(
     .filter((row) => isPaymentCandidate(row.comment ?? '', keywords))
     .filter((row) => !isAlreadyStaged(row, existingStaging))
     .map((row) => ({
+      // Reused as `sourceGroupId` in `reclassifyPair`, which deletes the very
+      // activity `row.id` names here — that's fine, since a grouping key
+      // only needs to be unique and stable, not point at a surviving row.
       sfTransactionId: row.id,
       inflowAccountId: row.accountId,
       inflowActivityId: row.id,
@@ -186,9 +189,11 @@ function toCreate(row: ActivityDetails, activityType: string, sourceGroupId: str
     accountId: row.accountId,
     activityType,
     activityDate: row.date,
-    amount: row.amount,
+    amount: row.amount ?? '0',
     currency: row.currency,
     comment: row.comment,
+    fee: row.fee,
+    subtype: row.subtype,
     sourceGroupId,
   };
 }
@@ -218,6 +223,17 @@ function toCreate(row: ActivityDetails, activityType: string, sourceGroupId: str
  * `runReconciliation`) treats it the same as a hard failure, instead of
  * counting the candidate resolved while one or both legs never actually
  * changed.
+ *
+ * A single call is not the same as an atomic one, though. If the creates
+ * apply but the deletes don't, the original inflow activity is still sitting
+ * there as `CREDIT`/`DEPOSIT`, so the next reconciliation run will find it
+ * again and reclassify it a second time — producing a duplicate linked pair,
+ * unlike the old `update()` approach, which was naturally idempotent to
+ * retry. If the deletes apply but the creates don't, both original
+ * activities are gone with nothing written to replace them — unrecoverable
+ * data loss, not just a stuck pending candidate. Both failure modes are
+ * believed rare (a single host call either round-trips or it doesn't), but
+ * neither is actually solved by making it one request.
  */
 async function reclassifyPair(
   api: HostAPI,
