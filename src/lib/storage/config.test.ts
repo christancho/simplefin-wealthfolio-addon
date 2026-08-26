@@ -3,6 +3,7 @@ import { createMockHost } from '../../test/mockHost';
 import {
   DEFAULT_LOOKBACK_DAYS,
   DEFAULT_PAYMENT_KEYWORDS,
+  DEFAULT_TRANSFER_KEYWORDS,
   cardAccountIdsFrom,
   cashAccountIdsFrom,
   readConfig,
@@ -18,6 +19,7 @@ describe('config', () => {
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
       paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
+      transferKeywords: DEFAULT_TRANSFER_KEYWORDS,
     });
   });
 
@@ -36,12 +38,13 @@ describe('config', () => {
       ],
       lookbackDays: 60,
       paymentKeywords: ['PAYMENT', 'AUTOPAY'],
+      transferKeywords: ['TRANSFER'],
     };
     await writeConfig(host.api, config);
     expect(await readConfig(host.api)).toEqual(config);
   });
 
-  it('defaults lookbackDays and paymentKeywords for a config written before those fields existed', async () => {
+  it('defaults lookbackDays, paymentKeywords, and transferKeywords for a config written before those fields existed', async () => {
     const host = createMockHost();
     await host.api.storage.set(
       'simplefin.config',
@@ -52,6 +55,7 @@ describe('config', () => {
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
       paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
+      transferKeywords: DEFAULT_TRANSFER_KEYWORDS,
     });
   });
 
@@ -62,6 +66,7 @@ describe('config', () => {
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
       paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
+      transferKeywords: DEFAULT_TRANSFER_KEYWORDS,
     });
     const stored = [...host.storage.values()].join('');
     expect(stored).not.toContain('@');
@@ -75,6 +80,7 @@ describe('config', () => {
       mappings: [],
       lookbackDays: DEFAULT_LOOKBACK_DAYS,
       paymentKeywords: DEFAULT_PAYMENT_KEYWORDS,
+      transferKeywords: DEFAULT_TRANSFER_KEYWORDS,
     });
     expect(host.api.logger.error).toHaveBeenCalled();
   });

@@ -1,10 +1,10 @@
 import type { ActivityDetails, ActivityUpdate, HostAPI } from '@wealthfolio/addon-sdk';
-import type { StagedCandidate } from '../storage/staging';
+import type { InflowActivityType, StagedCandidate } from '../storage/staging';
 import { isPaymentCandidate } from './activities';
 import { normalise } from './balance';
 
 /**
- * Unresolved candidate older than this, from its card payment's posted date,
+ * Unresolved candidate older than this, from its inflow leg's posted date,
  * drops out of staging without creating a transfer — required by issue #50
  * so the staged list can't grow unbounded when a pair genuinely never
  * appears (e.g. paid from an untracked account).
@@ -12,8 +12,8 @@ import { normalise } from './balance';
 export const EXPIRY_DAYS = 7;
 
 /**
- * The cash debit for a card payment typically lands up to this many days
- * before the card's payment posts — required by issue #50's matching window.
+ * The withdrawal leg typically lands up to this many days before the inflow
+ * leg's activity posts — required by issue #50's matching window.
  */
 export const MATCH_WINDOW_DAYS = 3;
 
@@ -55,15 +55,16 @@ async function searchAllByType(
 }
 
 /**
- * Resolves a staged candidate's real card-side activity. Once
- * `cardActivityId` is known, looks it up directly; otherwise matches by
+ * Resolves a staged candidate's real inflow-side activity — a card `CREDIT`
+ * or a cash-account `DEPOSIT`, per `candidate.inflowActivityType`. Once
+ * `inflowActivityId` is known, looks it up directly; otherwise matches by
  * account/amount/date/comment (the only info staged at detection time,
  * since `import()`'s response never carries the real persisted id).
  */
-export async function findCardActivity(api: HostAPI, candidate: StagedCandidate): Promise<ActivityDetails | null> {
-  const rows = await searchAllByType(api, [candidate.cardAccountId], 'CREDIT');
-  if (candidate.cardActivityId) {
-    return rows.find((r) => r.id === candidate.cardActivityId) ?? null;
+export async function findInflowActivity(api: HostAPI, candidate: StagedCandidate): Promise<ActivityDetails | null> {
+  const rows = await searchAllByType(api, [candidate.inflowAccountId], candidate.inflowActivityType);
+  if (candidate.inflowActivityId) {
+    return rows.find((r) => r.id === candidate.inflowActivityId) ?? null;
   }
   return (
     rows.find(
@@ -77,21 +78,29 @@ export async function findCardActivity(api: HostAPI, candidate: StagedCandidate)
 
 /**
  * Filters an already-fetched withdrawal pool down to this candidate's
- * matches (same amount, posted within the match window). Pure and
- * synchronous on purpose — the withdrawal pool is identical for every
- * candidate in a run, so callers fetch it once via `searchAllByType` and
- * reuse it across candidates rather than re-fetching per candidate.
+ * matches (same amount, posted within the match window, in an account other
+ * than the candidate's own inflow account). Pure and synchronous on purpose
+ * — the withdrawal pool is identical for every candidate in a run, so
+ * callers fetch it once via `searchAllByType` and reuse it across
+ * candidates rather than re-fetching per candidate.
+ *
+ * The same-account exclusion matters only for a cash-to-cash transfer
+ * candidate — its own account is part of the withdrawal search pool, unlike
+ * a credit-card candidate's account, which `cashAccountIdsFrom` already
+ * excludes from that pool. Without it, a transfer's destination account
+ * could match a withdrawal sitting in that very account.
  */
 function withdrawalMatches(withdrawals: ActivityDetails[], candidate: StagedCandidate): ActivityDetails[] {
-  const cardPostedSeconds = Date.parse(candidate.postedDate) / 1000;
-  const windowStartSeconds = cardPostedSeconds - MATCH_WINDOW_DAYS * SECONDS_PER_DAY;
+  const inflowPostedSeconds = Date.parse(candidate.postedDate) / 1000;
+  const windowStartSeconds = inflowPostedSeconds - MATCH_WINDOW_DAYS * SECONDS_PER_DAY;
 
   return withdrawals.filter((w) => {
+    if (w.accountId === candidate.inflowAccountId) return false;
     const postedSeconds = Date.parse(toIsoDateOnly(w.date)) / 1000;
     return (
       normalise(w.amount ?? '0') === normalise(candidate.amount) &&
       postedSeconds >= windowStartSeconds &&
-      postedSeconds <= cardPostedSeconds
+      postedSeconds <= inflowPostedSeconds
     );
   });
 }
@@ -109,9 +118,9 @@ export async function describeWithdrawals(
 /** True if `row` is already represented in `existing`, resolved or not — never stage it twice. */
 function isAlreadyStaged(row: ActivityDetails, existing: StagedCandidate[]): boolean {
   return existing.some((c) =>
-    c.cardActivityId
-      ? c.cardActivityId === row.id
-      : c.cardAccountId === row.accountId &&
+    c.inflowActivityId
+      ? c.inflowActivityId === row.id
+      : c.inflowAccountId === row.accountId &&
         normalise(c.amount) === normalise(row.amount ?? '0') &&
         c.postedDate === toIsoDateOnly(row.date) &&
         c.comment === (row.comment ?? ''),
@@ -119,31 +128,34 @@ function isAlreadyStaged(row: ActivityDetails, existing: StagedCandidate[]): boo
 }
 
 /**
- * Scans already-imported `CREDIT` activities on the given card accounts for
- * ones that look like bill payments but were never staged — either because
- * they predate this feature, or because the sync that imported them ran
- * before detection existed. Unlike live detection, the Wealthfolio activity
- * already exists, so `cardActivityId` is known immediately; no fuzzy lookup
- * is needed later. See `StagedCandidate.backfilled` for why these are exempt
- * from the normal expiry sweep.
+ * Scans already-imported inflow activities (`CREDIT` on the given card
+ * accounts, `DEPOSIT` on the given cash accounts) for ones that look like a
+ * bill payment or an internal transfer but were never staged — either
+ * because they predate this feature, or because the sync that imported them
+ * ran before detection existed. Unlike live detection, the Wealthfolio
+ * activity already exists, so `inflowActivityId` is known immediately; no
+ * fuzzy lookup is needed later. See `StagedCandidate.backfilled` for why
+ * these are exempt from the normal expiry sweep.
  */
-export async function findBackfillCandidates(
+async function findBackfillCandidatesOfType(
   api: HostAPI,
-  cardAccountIds: string[],
-  paymentKeywords: string[],
+  accountIds: string[],
+  inflowActivityType: InflowActivityType,
+  keywords: string[],
   existingStaging: StagedCandidate[],
 ): Promise<StagedCandidate[]> {
-  if (cardAccountIds.length === 0) return [];
+  if (accountIds.length === 0) return [];
 
-  const rows = await searchAllByType(api, cardAccountIds, 'CREDIT');
+  const rows = await searchAllByType(api, accountIds, inflowActivityType);
 
   return rows
-    .filter((row) => isPaymentCandidate(row.comment ?? '', paymentKeywords))
+    .filter((row) => isPaymentCandidate(row.comment ?? '', keywords))
     .filter((row) => !isAlreadyStaged(row, existingStaging))
     .map((row) => ({
       sfTransactionId: row.id,
-      cardAccountId: row.accountId,
-      cardActivityId: row.id,
+      inflowAccountId: row.accountId,
+      inflowActivityId: row.id,
+      inflowActivityType,
       amount: row.amount ?? '0',
       currency: row.currency,
       postedDate: toIsoDateOnly(row.date),
@@ -152,6 +164,21 @@ export async function findBackfillCandidates(
       candidateWithdrawalIds: [],
       backfilled: true,
     }));
+}
+
+export async function findBackfillCandidates(
+  api: HostAPI,
+  cardAccountIds: string[],
+  paymentKeywords: string[],
+  cashAccountIds: string[],
+  transferKeywords: string[],
+  existingStaging: StagedCandidate[],
+): Promise<StagedCandidate[]> {
+  const [cardCandidates, cashCandidates] = await Promise.all([
+    findBackfillCandidatesOfType(api, cardAccountIds, 'CREDIT', paymentKeywords, existingStaging),
+    findBackfillCandidatesOfType(api, cashAccountIds, 'DEPOSIT', transferKeywords, existingStaging),
+  ]);
+  return [...cardCandidates, ...cashCandidates];
 }
 
 function toUpdate(row: ActivityDetails, activityType: string): ActivityUpdate {
@@ -173,12 +200,13 @@ function toUpdate(row: ActivityDetails, activityType: string): ActivityUpdate {
  * staging record until it's dropped.
  *
  * Both legs are sent in a single `saveMany()` call rather than two
- * sequential `update()` calls: `findCardActivity()` only ever searches
- * `activityTypes: 'CREDIT'`, so if the card leg alone were reclassified to
- * `TRANSFER_IN` and the withdrawal leg's write then failed, the next
- * reconciliation attempt could never re-find the (now non-CREDIT) card
- * activity — leaving the pair permanently half-reclassified. One request,
- * one failure path avoids that split-write state.
+ * sequential `update()` calls: `findInflowActivity()` only ever searches
+ * `candidate.inflowActivityType`, so if the inflow leg alone were
+ * reclassified to `TRANSFER_IN` and the withdrawal leg's write then failed,
+ * the next reconciliation attempt could never re-find the (now
+ * non-CREDIT/DEPOSIT) inflow activity — leaving the pair permanently
+ * half-reclassified. One request, one failure path avoids that split-write
+ * state.
  *
  * `saveMany` can also resolve successfully while still reporting a per-item
  * failure in `result.errors` rather than throwing — that's checked here and
@@ -189,12 +217,12 @@ function toUpdate(row: ActivityDetails, activityType: string): ActivityUpdate {
  */
 async function reclassifyPair(
   api: HostAPI,
-  cardRow: ActivityDetails,
+  inflowRow: ActivityDetails,
   withdrawalRow: ActivityDetails,
   sfTransactionId: string,
 ): Promise<void> {
   const result = await api.activities.saveMany({
-    updates: [toUpdate(cardRow, 'TRANSFER_IN'), toUpdate(withdrawalRow, 'TRANSFER_OUT')],
+    updates: [toUpdate(inflowRow, 'TRANSFER_IN'), toUpdate(withdrawalRow, 'TRANSFER_OUT')],
   });
   if (result.errors.length > 0) {
     throw new Error(
@@ -210,7 +238,7 @@ export interface ReconciliationSummary {
 
 /**
  * Runs once per sync. For each staged candidate: expire if past the window,
- * otherwise resolve its real card activity and search for matching
+ * otherwise resolve its real inflow-side activity and search for matching
  * withdrawals — 0 stays pending, 1 auto-resolves, 2+ becomes ambiguous for
  * manual resolution. One candidate's failure never blocks another's.
  */
@@ -231,6 +259,18 @@ export async function runReconciliation(
       expired += 1;
       continue;
     }
+    // Pre-rename record from an older version of this addon (before
+    // `cardAccountId`/`cardActivityId` became `inflowAccountId`/
+    // `inflowActivityId` and `inflowActivityType` was added): these fields
+    // read as undefined under the current StagedCandidate shape, so there is
+    // nothing valid to search for. Drop it the same way a time-expired
+    // candidate is dropped, rather than sending an unfiltered/undefined
+    // search to the host (see searchAllByType's caveat below on why an
+    // empty accountIds filter is unsafe — the same doubt applies here).
+    if (!candidate.inflowAccountId || !candidate.inflowActivityType) {
+      expired += 1;
+      continue;
+    }
     active.push(candidate);
   }
 
@@ -245,14 +285,15 @@ export async function runReconciliation(
 
   // Withdrawals already claimed by an earlier candidate's unique match in
   // this same run — excluded from subsequent candidates' pools so two
-  // same-amount, overlapping-window candidates can't both reclassify the
-  // same real withdrawal.
+  // same-amount, overlapping-window candidates (whether both card payments,
+  // both cash transfers, or one of each) can't both reclassify the same
+  // real withdrawal.
   const claimedWithdrawalIds = new Set<string>();
 
   for (const candidate of active) {
     try {
-      const cardRow = await findCardActivity(api, candidate);
-      if (!cardRow) {
+      const inflowRow = await findInflowActivity(api, candidate);
+      if (!inflowRow) {
         // Host indexing lag or a transaction detected but not yet settled —
         // retry on the next sync run.
         remaining.push(candidate);
@@ -262,20 +303,20 @@ export async function runReconciliation(
       const matches = withdrawalMatches(withdrawals, candidate).filter((w) => !claimedWithdrawalIds.has(w.id));
 
       if (matches.length === 0) {
-        remaining.push({ ...candidate, cardActivityId: cardRow.id, status: 'pending', candidateWithdrawalIds: [] });
+        remaining.push({ ...candidate, inflowActivityId: inflowRow.id, status: 'pending', candidateWithdrawalIds: [] });
         continue;
       }
       if (matches.length > 1) {
         remaining.push({
           ...candidate,
-          cardActivityId: cardRow.id,
+          inflowActivityId: inflowRow.id,
           status: 'ambiguous',
           candidateWithdrawalIds: matches.map((w) => w.id),
         });
         continue;
       }
 
-      await reclassifyPair(api, cardRow, matches[0], candidate.sfTransactionId);
+      await reclassifyPair(api, inflowRow, matches[0], candidate.sfTransactionId);
       claimedWithdrawalIds.add(matches[0].id);
       resolved += 1;
     } catch (error) {
@@ -296,9 +337,9 @@ export async function resolveAmbiguous(
   cashAccountIds: string[],
   chosenWithdrawalId: string,
 ): Promise<void> {
-  const cardRow = await findCardActivity(api, candidate);
-  if (!cardRow) {
-    throw new Error(`Could not find the card activity for candidate ${candidate.sfTransactionId}`);
+  const inflowRow = await findInflowActivity(api, candidate);
+  if (!inflowRow) {
+    throw new Error(`Could not find the inflow activity for candidate ${candidate.sfTransactionId}`);
   }
 
   const withdrawals = await searchAllByType(api, cashAccountIds, 'WITHDRAWAL');
@@ -307,5 +348,5 @@ export async function resolveAmbiguous(
     throw new Error(`Could not find withdrawal ${chosenWithdrawalId}`);
   }
 
-  await reclassifyPair(api, cardRow, withdrawalRow, candidate.sfTransactionId);
+  await reclassifyPair(api, inflowRow, withdrawalRow, candidate.sfTransactionId);
 }

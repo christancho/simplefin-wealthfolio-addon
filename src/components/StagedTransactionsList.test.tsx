@@ -7,8 +7,9 @@ import { StagedTransactionsList } from './StagedTransactionsList';
 
 const pending: StagedCandidate = {
   sfTransactionId: 'TXN-1',
-  cardAccountId: 'WF-CARD',
-  cardActivityId: null,
+  inflowAccountId: 'WF-CARD',
+  inflowActivityId: null,
+  inflowActivityType: 'CREDIT',
   amount: '50.00',
   currency: 'USD',
   postedDate: '2026-08-01',
@@ -19,8 +20,9 @@ const pending: StagedCandidate = {
 
 const ambiguous: StagedCandidate = {
   sfTransactionId: 'TXN-2',
-  cardAccountId: 'WF-CARD',
-  cardActivityId: 'CARD-ACT-2',
+  inflowAccountId: 'WF-CARD',
+  inflowActivityId: 'CARD-ACT-2',
+  inflowActivityType: 'CREDIT',
   amount: '80.00',
   currency: 'USD',
   postedDate: '2026-08-02',
@@ -33,6 +35,7 @@ const defaultProps = {
   cashAccountIds: ['WF-CASH'],
   cardAccountIds: ['WF-CARD'],
   paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
+  transferKeywords: ['TRANSFER', 'XFER'],
   wfAccounts: [] as never,
 };
 
@@ -68,21 +71,21 @@ describe('StagedTransactionsList', () => {
     expect(screen.getByText('2026-08-02')).toBeInTheDocument();
   });
 
-  it('orders the staged table columns as date, comment, status, amount, action', async () => {
+  it('orders the staged table columns as date, comment, type, status, amount, action', async () => {
     const host = createMockHost();
     await writeStaging(host.api, [pending]);
 
     render(<StagedTransactionsList api={host.api} {...defaultProps} />);
 
     const headers = await screen.findAllByRole('columnheader');
-    expect(headers.map((h) => h.textContent)).toEqual(['Date', 'Comment', 'Status', 'Amount', 'Action']);
+    expect(headers.map((h) => h.textContent)).toEqual(['Date', 'Comment', 'Type', 'Status', 'Amount', 'Action']);
   });
 
   it('groups staged candidates under a header naming each credit-card account', async () => {
     const host = createMockHost();
     await writeStaging(host.api, [
-      { ...pending, sfTransactionId: 'TXN-A', cardAccountId: 'WF-CARD-A', comment: 'Chase Payment' },
-      { ...pending, sfTransactionId: 'TXN-B', cardAccountId: 'WF-CARD-B', comment: 'Amex Payment' },
+      { ...pending, sfTransactionId: 'TXN-A', inflowAccountId: 'WF-CARD-A', comment: 'Chase Payment' },
+      { ...pending, sfTransactionId: 'TXN-B', inflowAccountId: 'WF-CARD-B', comment: 'Amex Payment' },
     ]);
 
     render(
@@ -104,6 +107,31 @@ describe('StagedTransactionsList', () => {
     const amexGroup = screen.getByText(/amex gold \(1\)/i).closest('tr') as HTMLElement;
     expect(within(chaseGroup.nextElementSibling as HTMLElement).getByText('Chase Payment')).toBeInTheDocument();
     expect(within(amexGroup.nextElementSibling as HTMLElement).getByText('Amex Payment')).toBeInTheDocument();
+  });
+
+  it('labels a card-payment candidate and a cash-transfer candidate distinctly', async () => {
+    const host = createMockHost();
+    const transfer: StagedCandidate = {
+      sfTransactionId: 'TXN-3',
+      inflowAccountId: 'WF-SAVINGS',
+      inflowActivityId: null,
+      inflowActivityType: 'DEPOSIT',
+      amount: '200.00',
+      currency: 'USD',
+      postedDate: '2026-08-03',
+      comment: 'Online Transfer From Checking',
+      status: 'pending',
+      candidateWithdrawalIds: [],
+    };
+    await writeStaging(host.api, [pending, transfer]);
+
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
+
+    const cardRow = (await screen.findByText('Online Payment Thank You')).closest('tr') as HTMLElement;
+    expect(within(cardRow).getByText('Card payment')).toBeInTheDocument();
+
+    const transferRow = (await screen.findByText('Online Transfer From Checking')).closest('tr') as HTMLElement;
+    expect(within(transferRow).getByText('Cash transfer')).toBeInTheDocument();
   });
 
   it('dismisses a pending candidate without calling the host activities API', async () => {

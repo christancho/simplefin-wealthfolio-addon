@@ -3,21 +3,27 @@ import { storageKey } from './keys';
 
 export type CandidateStatus = 'pending' | 'ambiguous';
 
+/** Which Wealthfolio activity type the staged inflow leg imported as. */
+export type InflowActivityType = 'CREDIT' | 'DEPOSIT';
+
 export interface StagedCandidate {
   /**
-   * Identity: the SimpleFIN transaction id of the card-side CREDIT for a
-   * live-detected candidate — or, for a `backfilled` one (where the original
-   * SimpleFIN id isn't recoverable), the Wealthfolio activity id. Only ever
-   * used as an opaque key; never compared against real SimpleFIN data.
+   * Identity: the SimpleFIN transaction id of the inflow leg (card CREDIT or
+   * cash-transfer DEPOSIT) for a live-detected candidate — or, for a
+   * `backfilled` one (where the original SimpleFIN id isn't recoverable), the
+   * Wealthfolio activity id. Only ever used as an opaque key; never compared
+   * against real SimpleFIN data.
    */
   sfTransactionId: string;
-  /** Wealthfolio account id of the credit-card account. */
-  cardAccountId: string;
+  /** Wealthfolio account id the inflow leg landed on. */
+  inflowAccountId: string;
   /** Real Wealthfolio activity id — null until a reconciliation pass resolves it via search(). */
-  cardActivityId: string | null;
+  inflowActivityId: string | null;
+  /** 'CREDIT' for a credit-card bill payment; 'DEPOSIT' for a cash-to-cash transfer. */
+  inflowActivityType: InflowActivityType;
   amount: string;
   currency: string;
-  /** ISO date (YYYY-MM-DD) the card CREDIT posted. */
+  /** ISO date (YYYY-MM-DD) the inflow leg posted. */
   postedDate: string;
   comment: string;
   status: CandidateStatus;

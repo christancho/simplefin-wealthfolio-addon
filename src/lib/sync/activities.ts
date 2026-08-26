@@ -1,7 +1,7 @@
 import type { AccountType, ActivityImport, HostAPI } from '@wealthfolio/addon-sdk';
 import type { SfAccount, SfTransaction } from '../simplefin/parse';
 import type { AccountMapping } from '../storage/config';
-import type { StagedCandidate } from '../storage/staging';
+import type { InflowActivityType, StagedCandidate } from '../storage/staging';
 import { advanceWatermark, shouldPush, type Watermark } from '../storage/watermark';
 
 /** Epoch seconds -> YYYY-MM-DD in UTC, the form Wealthfolio's importer expects. */
@@ -45,31 +45,35 @@ export function toActivityImport(
   };
 }
 
-/** Case-insensitive substring match against the user's configured payment keywords. */
+/** Case-insensitive substring match against a configured keyword list. */
 export function isPaymentCandidate(text: string, keywords: string[]): boolean {
   const upper = text.toUpperCase();
   return keywords.some((keyword) => keyword.trim() !== '' && upper.includes(keyword.toUpperCase()));
 }
 
 /**
- * A `CREDIT` transaction on a credit-card account whose payee/comment looks
- * like a bill payment becomes a staged candidate for TRANSFER_IN/OUT
+ * An inflow transaction (`CREDIT` on a credit-card account, or `DEPOSIT` on a
+ * plain cash account) whose payee/comment looks like a bill payment or an
+ * internal transfer becomes a staged candidate for TRANSFER_IN/OUT
  * reconciliation (see `./reconciliation.ts`). Returns null for anything that
- * doesn't match — normal purchases and unrelated credits are left untouched.
+ * doesn't match — normal purchases, paychecks, and unrelated credits are left
+ * untouched.
  */
 export function detectCandidate(
   txn: SfTransaction,
   mapping: AccountMapping,
-  paymentKeywords: string[],
+  keywords: string[],
+  inflowActivityType: InflowActivityType,
   currency: string,
 ): StagedCandidate | null {
   const text = txn.payee || txn.description;
-  if (!isPaymentCandidate(text, paymentKeywords)) return null;
+  if (!isPaymentCandidate(text, keywords)) return null;
 
   return {
     sfTransactionId: txn.id,
-    cardAccountId: mapping.wfAccountId,
-    cardActivityId: null,
+    inflowAccountId: mapping.wfAccountId,
+    inflowActivityId: null,
+    inflowActivityType,
     amount: txn.amount.trim().replace(/^-/, ''),
     currency,
     postedDate: isoDate(txn.posted),
@@ -92,6 +96,7 @@ export async function syncCashAccount(
   watermark: Watermark,
   accountType: AccountType,
   paymentKeywords: string[],
+  transferKeywords: string[],
 ): Promise<{
   result: CashSyncCounts;
   watermark: Watermark;
@@ -183,13 +188,21 @@ export async function syncCashAccount(
     throw error;
   }
 
+  // Only an inflow (money landing on the account) is ever scanned for
+  // keywords — the withdrawal/purchase leg is never turned into a candidate
+  // itself, only matched against one. Which keyword list and inflow activity
+  // type applies depends on what kind of account this is: a credit-card
+  // CREDIT is checked against paymentKeywords, a plain cash account's DEPOSIT
+  // against transferKeywords.
+  const inflowTxns = importableTxns.filter((t) => !t.amount.trim().startsWith('-'));
   const stagedCandidates =
     accountType === 'CREDIT_CARD'
-      ? importableTxns
-          .filter((t) => !t.amount.trim().startsWith('-'))
-          .map((t) => detectCandidate(t, mapping, paymentKeywords, sfAccount.currency))
+      ? inflowTxns
+          .map((t) => detectCandidate(t, mapping, paymentKeywords, 'CREDIT', sfAccount.currency))
           .filter((c): c is StagedCandidate => c !== null)
-      : [];
+      : inflowTxns
+          .map((t) => detectCandidate(t, mapping, transferKeywords, 'DEPOSIT', sfAccount.currency))
+          .filter((c): c is StagedCandidate => c !== null);
 
   return {
     result: { imported: outcome.summary.imported, skipped, duplicates },

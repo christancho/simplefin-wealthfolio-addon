@@ -26,6 +26,7 @@ const config: SyncConfig = {
   ],
   lookbackDays: 30,
   paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
+  transferKeywords: ['TRANSFER', 'XFER'],
 };
 
 const bridgePayload = {
@@ -286,6 +287,7 @@ describe('runSync', () => {
       ],
       lookbackDays: 30,
       paymentKeywords: ['PAYMENT'],
+      transferKeywords: ['TRANSFER', 'XFER'],
     };
 
     await runSync(host.api, cardConfig);
@@ -388,6 +390,7 @@ describe('runSync', () => {
       ],
       lookbackDays: 30,
       paymentKeywords: ['PAYMENT'],
+      transferKeywords: ['TRANSFER', 'XFER'],
     };
 
     await runSync(host.api, cardConfig);
@@ -401,6 +404,102 @@ describe('runSync', () => {
     expect(await readStaging(host.api)).toEqual([]);
   });
 
+  it('detects a cash-to-cash transfer candidate and reconciles it against an existing withdrawal in another cash account, in the same run', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1754438400 * 1000 + 2 * 86_400_000));
+
+    const host = createMockHost();
+    host.respond(/\/accounts/, {
+      body: JSON.stringify({
+        errors: [],
+        accounts: [
+          {
+            org: { name: 'Bank B' },
+            id: 'ACT-SAVINGS',
+            name: 'Savings',
+            currency: 'USD',
+            balance: '0.00',
+            'balance-date': 1754438400,
+            transactions: [
+              { id: 'TXN-XFER', posted: 1754438400, amount: '200.00', description: 'Online Transfer From Checking' },
+            ],
+            holdings: [],
+          },
+        ],
+      }),
+    });
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) => a.map((row) => ({ ...row, isValid: true })));
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R',
+      summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+    }));
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'DEPOSIT') {
+        return {
+          data: [
+            {
+              id: 'DEPOSIT-ACT-1',
+              accountId: 'WF-SAVINGS',
+              activityType: 'DEPOSIT',
+              date: '2025-08-06T00:00:00+00:00',
+              amount: '200',
+              currency: 'USD',
+              comment: 'Online Transfer From Checking',
+            },
+          ],
+          meta: { totalRowCount: 1 },
+        };
+      }
+      return {
+        data: [
+          {
+            id: 'CHECKING-WD-1',
+            accountId: 'WF-CHECKING',
+            activityType: 'WITHDRAWAL',
+            date: '2025-08-05T00:00:00+00:00',
+            amount: '200',
+            currency: 'USD',
+            comment: 'Online Transfer To Savings',
+          },
+        ],
+        meta: { totalRowCount: 1 },
+      };
+    }) as never;
+    host.api.activities.saveMany = vi.fn(async (req) => ({
+      created: [],
+      updated: req.updates ?? [],
+      deleted: [],
+      createdMappings: [],
+      errors: [],
+    })) as never;
+    host.api.accounts.getAll = vi.fn(async () => [
+      { id: 'WF-SAVINGS', accountType: 'CASH', balance: 0 },
+      { id: 'WF-CHECKING', accountType: 'CASH', balance: 0 },
+    ] as never);
+
+    const transferConfig = {
+      baseUrl: 'https://bridge.simplefin.org/simplefin',
+      mappings: [
+        { sfAccountId: 'ACT-SAVINGS', wfAccountId: 'WF-SAVINGS', mode: 'CASH' as const, sfAccountName: 'Savings', orgName: 'Bank B' },
+        { sfAccountId: 'ACT-CHECKING', wfAccountId: 'WF-CHECKING', mode: 'CASH' as const, sfAccountName: 'Checking', orgName: 'Bank A' },
+      ],
+      lookbackDays: 30,
+      paymentKeywords: ['PAYMENT'],
+      transferKeywords: ['TRANSFER'],
+    };
+
+    await runSync(host.api, transferConfig);
+
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'DEPOSIT-ACT-1', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'CHECKING-WD-1', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
+    expect(await readStaging(host.api)).toEqual([]);
+  });
+
   it('keeps an unresolved candidate staged for the next run', async () => {
     const host = createMockHost();
     host.respond(/\/accounts/, { body: JSON.stringify({ errors: [], accounts: [] }) });
@@ -409,8 +508,9 @@ describe('runSync', () => {
     await writeStaging(host.api, [
       {
         sfTransactionId: 'TXN-OLD',
-        cardAccountId: 'ACT-CARD',
-        cardActivityId: null,
+        inflowAccountId: 'ACT-CARD',
+        inflowActivityId: null,
+        inflowActivityType: 'CREDIT',
         amount: '50.00',
         currency: 'USD',
         postedDate: new Date().toISOString().slice(0, 10),
@@ -426,6 +526,7 @@ describe('runSync', () => {
       mappings: [],
       lookbackDays: 30,
       paymentKeywords: ['PAYMENT'],
+      transferKeywords: ['TRANSFER', 'XFER'],
     });
 
     const staged = await readStaging(host.api);
@@ -438,8 +539,9 @@ describe('runSync', () => {
     await writeStaging(host.api, [
       {
         sfTransactionId: 'TXN-BAD',
-        cardAccountId: 'WF-1',
-        cardActivityId: null,
+        inflowAccountId: 'WF-1',
+        inflowActivityId: null,
+        inflowActivityType: 'CREDIT',
         amount: '50.00',
         currency: 'USD',
         postedDate: new Date().toISOString().slice(0, 10),
@@ -472,6 +574,7 @@ describe('runSync opening-balance backfill', () => {
     ],
     lookbackDays: 30,
     paymentKeywords: ['PAYMENT', 'AUTOPAY', 'THANK YOU'],
+    transferKeywords: ['TRANSFER', 'XFER'],
   };
 
   function backfillHost(sfBalance: string, transactions: unknown[]) {

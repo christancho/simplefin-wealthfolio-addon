@@ -19,15 +19,19 @@ import { describeWithdrawals, findBackfillCandidates, resolveAmbiguous, runRecon
 import { readStaging, writeStaging, type StagedCandidate } from '../lib/storage/staging';
 import { compactCellClassName, compactHeadClassName } from './tableStyle';
 
-const COLUMN_COUNT = 5;
+const COLUMN_COUNT = 6;
 
-/** Groups candidates by credit-card account, preserving first-seen order. */
-function groupByCardAccount(candidates: StagedCandidate[]): [string, StagedCandidate[]][] {
+function candidateTypeLabel(candidate: StagedCandidate): string {
+  return candidate.inflowActivityType === 'DEPOSIT' ? 'Cash transfer' : 'Card payment';
+}
+
+/** Groups candidates by their inflow account (credit card or cash), preserving first-seen order. */
+function groupByInflowAccount(candidates: StagedCandidate[]): [string, StagedCandidate[]][] {
   const groups = new Map<string, StagedCandidate[]>();
   for (const candidate of candidates) {
-    const group = groups.get(candidate.cardAccountId) ?? [];
+    const group = groups.get(candidate.inflowAccountId) ?? [];
     group.push(candidate);
-    groups.set(candidate.cardAccountId, group);
+    groups.set(candidate.inflowAccountId, group);
   }
   return [...groups.entries()];
 }
@@ -37,6 +41,7 @@ export interface StagedTransactionsListProps {
   cashAccountIds: string[];
   cardAccountIds: string[];
   paymentKeywords: string[];
+  transferKeywords: string[];
   wfAccounts: Account[];
 }
 
@@ -45,6 +50,7 @@ export function StagedTransactionsList({
   cashAccountIds,
   cardAccountIds,
   paymentKeywords,
+  transferKeywords,
   wfAccounts,
 }: StagedTransactionsListProps) {
   const [candidates, setCandidates] = useState<StagedCandidate[] | null>(null);
@@ -106,7 +112,7 @@ export function StagedTransactionsList({
     setScanning(true);
     try {
       const existing = await readStaging(api);
-      const found = await findBackfillCandidates(api, cardAccountIds, paymentKeywords, existing);
+      const found = await findBackfillCandidates(api, cardAccountIds, paymentKeywords, cashAccountIds, transferKeywords, existing);
       const { candidates: remaining } = await runReconciliation(
         api,
         [...existing, ...found],
@@ -124,7 +130,7 @@ export function StagedTransactionsList({
 
   const scanButton = (
     <Button size="sm" variant="outline" onClick={scanForOlderPayments} disabled={scanning}>
-      {scanning ? 'Scanning…' : 'Scan for older payments'}
+      {scanning ? 'Scanning…' : 'Scan for older payments and transfers'}
     </Button>
   );
 
@@ -155,16 +161,17 @@ export function StagedTransactionsList({
           <TableRow>
             <TableHead className={compactHeadClassName}>Date</TableHead>
             <TableHead className={compactHeadClassName}>Comment</TableHead>
+            <TableHead className={compactHeadClassName}>Type</TableHead>
             <TableHead className={compactHeadClassName}>Status</TableHead>
             <TableHead className={compactHeadClassName}>Amount</TableHead>
             <TableHead className={compactHeadClassName}>Action</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {groupByCardAccount(candidates).map(([cardAccountId, group]) => {
-            const accountName = wfAccounts.find((a) => a.id === cardAccountId)?.name ?? cardAccountId;
+          {groupByInflowAccount(candidates).map(([inflowAccountId, group]) => {
+            const accountName = wfAccounts.find((a) => a.id === inflowAccountId)?.name ?? inflowAccountId;
             return (
-              <Fragment key={cardAccountId}>
+              <Fragment key={inflowAccountId}>
                 <TableRow>
                   <TableCell className={compactCellClassName} colSpan={COLUMN_COUNT}>
                     {`${accountName} (${group.length})`}
@@ -174,6 +181,7 @@ export function StagedTransactionsList({
                   <TableRow key={candidate.sfTransactionId}>
                     <TableCell className={compactCellClassName}>{candidate.postedDate}</TableCell>
                     <TableCell className={compactCellClassName}>{candidate.comment}</TableCell>
+                    <TableCell className={compactCellClassName}>{candidateTypeLabel(candidate)}</TableCell>
                     <TableCell className={compactCellClassName}>{candidate.status}</TableCell>
                     <TableCell className={compactCellClassName}>{formatAmount(candidate.amount, candidate.currency)}</TableCell>
                     <TableCell className={compactCellClassName}>
