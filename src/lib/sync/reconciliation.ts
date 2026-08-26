@@ -192,6 +192,18 @@ export async function runReconciliation(
       expired += 1;
       continue;
     }
+    // Pre-rename record from an older version of this addon (before
+    // `cardAccountId`/`cardActivityId` became `inflowAccountId`/
+    // `inflowActivityId` and `inflowActivityType` was added): these fields
+    // read as undefined under the current StagedCandidate shape, so there is
+    // nothing valid to search for. Drop it the same way a time-expired
+    // candidate is dropped, rather than sending an unfiltered/undefined
+    // search to the host (see searchAllByType's caveat below on why an
+    // empty accountIds filter is unsafe — the same doubt applies here).
+    if (!candidate.inflowAccountId || !candidate.inflowActivityType) {
+      expired += 1;
+      continue;
+    }
     active.push(candidate);
   }
 

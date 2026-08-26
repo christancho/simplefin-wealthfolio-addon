@@ -159,6 +159,36 @@ describe('runReconciliation', () => {
     expect(host.api.activities.saveMany).not.toHaveBeenCalled();
   });
 
+  it('marks ambiguous with two or more withdrawal matches for a cash-transfer (DEPOSIT) candidate too', async () => {
+    const host = createMockHost();
+    const depositActivity = cardActivity({
+      id: 'DEPOSIT-ACT-1',
+      accountId: 'WF-CASH-B',
+      activityType: 'DEPOSIT',
+    });
+
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'DEPOSIT') return { data: [depositActivity], meta: { totalRowCount: 1 } };
+      return {
+        data: [withdrawalActivity(), withdrawalActivity({ id: 'CASH-ACT-2', accountId: 'WF-CASH-2' })],
+        meta: { totalRowCount: 2 },
+      };
+    }) as never;
+
+    const transferCandidate = candidate({ inflowAccountId: 'WF-CASH-B', inflowActivityType: 'DEPOSIT' });
+
+    const { candidates } = await runReconciliation(
+      host.api,
+      [transferCandidate],
+      ['WF-CASH', 'WF-CASH-2', 'WF-CASH-B'],
+      NOW,
+    );
+
+    expect(candidates[0].status).toBe('ambiguous');
+    expect(candidates[0].candidateWithdrawalIds.sort()).toEqual(['CASH-ACT-1', 'CASH-ACT-2']);
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
+  });
+
   it('excludes a withdrawal outside the 3-day match window', async () => {
     const host = createMockHost();
     host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
@@ -193,6 +223,23 @@ describe('runReconciliation', () => {
 
     const old = candidate({ postedDate: '2025-07-01' });
     const { candidates, summary } = await runReconciliation(host.api, [old], ['WF-CASH'], NOW);
+
+    expect(candidates).toHaveLength(0);
+    expect(summary.expired).toBe(1);
+    expect(host.api.activities.search).not.toHaveBeenCalled();
+  });
+
+  it('drops a legacy staging record missing inflowAccountId/inflowActivityType without searching', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn();
+
+    // Simulates a record persisted before the cardAccountId/cardActivityId ->
+    // inflowAccountId/inflowActivityId rename and the inflowActivityType
+    // addition: those fields are absent under the old shape, so they read as
+    // undefined here despite the StagedCandidate type requiring them.
+    const legacy = candidate({ inflowAccountId: undefined, inflowActivityType: undefined } as never);
+
+    const { candidates, summary } = await runReconciliation(host.api, [legacy], ['WF-CASH'], NOW);
 
     expect(candidates).toHaveLength(0);
     expect(summary.expired).toBe(1);
@@ -381,6 +428,40 @@ describe('resolveAmbiguous', () => {
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
       updates: [
         expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
+        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      ],
+    });
+  });
+
+  it('reclassifies the chosen withdrawal and the resolved deposit activity for a cash-transfer candidate', async () => {
+    const host = createMockHost();
+    const depositActivity = cardActivity({
+      id: 'DEPOSIT-ACT-1',
+      accountId: 'WF-CASH-B',
+      activityType: 'DEPOSIT',
+    });
+
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'DEPOSIT') return { data: [depositActivity], meta: { totalRowCount: 1 } };
+      return { data: [withdrawalActivity(), withdrawalActivity({ id: 'OTHER' })], meta: { totalRowCount: 2 } };
+    }) as never;
+
+    await resolveAmbiguous(
+      host.api,
+      candidate({
+        inflowAccountId: 'WF-CASH-B',
+        inflowActivityType: 'DEPOSIT',
+        status: 'ambiguous',
+        inflowActivityId: 'DEPOSIT-ACT-1',
+        candidateWithdrawalIds: ['CASH-ACT-1', 'OTHER'],
+      }),
+      ['WF-CASH'],
+      'CASH-ACT-1',
+    );
+
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      updates: [
+        expect.objectContaining({ id: 'DEPOSIT-ACT-1', activityType: 'TRANSFER_IN' }),
         expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
       ],
     });
