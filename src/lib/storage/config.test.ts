@@ -4,6 +4,7 @@ import {
   DEFAULT_LOOKBACK_DAYS,
   DEFAULT_PAYMENT_KEYWORDS,
   DEFAULT_TRANSFER_KEYWORDS,
+  cardAccountIdsFrom,
   cashAccountIdsFrom,
   readConfig,
   writeConfig,
@@ -109,5 +110,32 @@ describe('cashAccountIdsFrom', () => {
     const mappings = [mapping({ wfAccountId: 'WF-BROKERAGE', mode: 'HOLDINGS' })];
 
     expect(cashAccountIdsFrom(mappings, () => 'CASH' as const)).toEqual([]);
+  });
+});
+
+describe('cardAccountIdsFrom', () => {
+  const mapping = (over: Partial<AccountMapping> = {}): AccountMapping => ({
+    sfAccountId: 'ACT-1',
+    wfAccountId: 'WF-1',
+    mode: 'CASH',
+    sfAccountName: 'Account',
+    orgName: 'Bank',
+    ...over,
+  });
+
+  it('includes only CREDIT_CARD accounts', () => {
+    const mappings = [
+      mapping({ wfAccountId: 'WF-CARD' }),
+      mapping({ wfAccountId: 'WF-CASH' }),
+    ];
+    const accountTypeOf = (id: string) => (id === 'WF-CARD' ? ('CREDIT_CARD' as const) : ('CASH' as const));
+
+    expect(cardAccountIdsFrom(mappings, accountTypeOf)).toEqual(['WF-CARD']);
+  });
+
+  it('excludes a HOLDINGS-mode mapping even if its account type is CREDIT_CARD', () => {
+    const mappings = [mapping({ wfAccountId: 'WF-BROKERAGE', mode: 'HOLDINGS' })];
+
+    expect(cardAccountIdsFrom(mappings, () => 'CREDIT_CARD' as const)).toEqual([]);
   });
 });

@@ -96,6 +96,7 @@ describe('detectCandidate', () => {
       mapping,
       ['PAYMENT'],
       'CREDIT',
+      'USD',
     );
     expect(candidate).toEqual({
       sfTransactionId: 'TXN-9',
@@ -103,6 +104,7 @@ describe('detectCandidate', () => {
       inflowActivityId: null,
       inflowActivityType: 'CREDIT',
       amount: '75.00',
+      currency: 'USD',
       postedDate: '2025-08-06',
       comment: 'Online Payment Thank You',
       status: 'pending',
@@ -116,6 +118,7 @@ describe('detectCandidate', () => {
       mapping,
       ['TRANSFER'],
       'DEPOSIT',
+      'USD',
     );
     expect(candidate).toEqual({
       sfTransactionId: 'TXN-10',
@@ -123,6 +126,7 @@ describe('detectCandidate', () => {
       inflowActivityId: null,
       inflowActivityType: 'DEPOSIT',
       amount: '200.00',
+      currency: 'USD',
       postedDate: '2025-08-06',
       comment: 'Online Transfer From Checking',
       status: 'pending',
@@ -131,7 +135,7 @@ describe('detectCandidate', () => {
   });
 
   it('returns null for a transaction that does not match any keyword', () => {
-    expect(detectCandidate(txn({ payee: 'Amazon Refund' }) as never, mapping, ['PAYMENT'], 'CREDIT')).toBeNull();
+    expect(detectCandidate(txn({ payee: 'Amazon Refund' }) as never, mapping, ['PAYMENT'], 'CREDIT', 'USD')).toBeNull();
   });
 });
 

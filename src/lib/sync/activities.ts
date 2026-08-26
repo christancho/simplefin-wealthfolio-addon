@@ -64,6 +64,7 @@ export function detectCandidate(
   mapping: AccountMapping,
   keywords: string[],
   inflowActivityType: InflowActivityType,
+  currency: string,
 ): StagedCandidate | null {
   const text = txn.payee || txn.description;
   if (!isPaymentCandidate(text, keywords)) return null;
@@ -74,6 +75,7 @@ export function detectCandidate(
     inflowActivityId: null,
     inflowActivityType,
     amount: txn.amount.trim().replace(/^-/, ''),
+    currency,
     postedDate: isoDate(txn.posted),
     comment: text,
     status: 'pending',
@@ -196,10 +198,10 @@ export async function syncCashAccount(
   const stagedCandidates =
     accountType === 'CREDIT_CARD'
       ? inflowTxns
-          .map((t) => detectCandidate(t, mapping, paymentKeywords, 'CREDIT'))
+          .map((t) => detectCandidate(t, mapping, paymentKeywords, 'CREDIT', sfAccount.currency))
           .filter((c): c is StagedCandidate => c !== null)
       : inflowTxns
-          .map((t) => detectCandidate(t, mapping, transferKeywords, 'DEPOSIT'))
+          .map((t) => detectCandidate(t, mapping, transferKeywords, 'DEPOSIT', sfAccount.currency))
           .filter((c): c is StagedCandidate => c !== null);
 
   return {

@@ -1,5 +1,6 @@
 import type { Account, HostAPI } from '@wealthfolio/addon-sdk';
 import { Alert, AlertDescription, Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@wealthfolio/ui';
+import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AccountMapTable } from '../components/AccountMapTable';
 import { BridgeErrorBanner } from '../components/BridgeErrorBanner';
@@ -11,7 +12,7 @@ import { SyncSummary } from '../components/SyncSummary';
 import { fetchAccounts } from '../lib/simplefin/client';
 import type { SfAccount } from '../lib/simplefin/parse';
 import { bridgeDashboardUrl } from '../lib/simplefin/url';
-import { cashAccountIdsFrom, readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
+import { cardAccountIdsFrom, cashAccountIdsFrom, readConfig, writeConfig, type AccountMapping, type SyncConfig } from '../lib/storage/config';
 import { readHistory, type SyncRun } from '../lib/storage/history';
 import { runSync } from '../lib/sync/run';
 
@@ -28,6 +29,7 @@ export function SyncPage({ api }: SyncPageProps) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<SyncRun | null>(null);
   const [history, setHistory] = useState<SyncRun[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
 
   async function loadConfig() {
     try {
@@ -47,13 +49,15 @@ export function SyncPage({ api }: SyncPageProps) {
     const baseUrl = config.baseUrl;
 
     setError(null);
+    setLoadingAccounts(true);
     Promise.all([fetchAccounts(api.network, baseUrl, {}), api.accounts.getAll(), readHistory(api)])
       .then(([{ accounts }, wfAccountList, historyList]) => {
         setSfAccounts(accounts);
         setWfAccounts(wfAccountList);
         setHistory(historyList);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoadingAccounts(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config?.baseUrl]);
 
@@ -178,14 +182,21 @@ export function SyncPage({ api }: SyncPageProps) {
         </div>
         <div className="min-w-0 flex-1">
           <TabsContent value="accounts" className="mt-0">
-            <AccountMapTable
-              api={api}
-              sfAccounts={sfAccounts}
-              wfAccounts={wfAccounts}
-              mappings={config.mappings}
-              onChange={persistMappings}
-              onAccountCreated={(account) => setWfAccounts((prev) => [...prev, account])}
-            />
+            {loadingAccounts ? (
+              <div className="text-muted-foreground flex items-center gap-2 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading accounts…
+              </div>
+            ) : (
+              <AccountMapTable
+                api={api}
+                sfAccounts={sfAccounts}
+                wfAccounts={wfAccounts}
+                mappings={config.mappings}
+                onChange={persistMappings}
+                onAccountCreated={(account) => setWfAccounts((prev) => [...prev, account])}
+              />
+            )}
           </TabsContent>
           <TabsContent value="summary" className="mt-0">
             {lastRun ? (
@@ -205,6 +216,13 @@ export function SyncPage({ api }: SyncPageProps) {
                 config.mappings,
                 (id) => wfAccounts.find((a) => a.id === id)?.accountType,
               )}
+              cardAccountIds={cardAccountIdsFrom(
+                config.mappings,
+                (id) => wfAccounts.find((a) => a.id === id)?.accountType,
+              )}
+              paymentKeywords={config.paymentKeywords}
+              transferKeywords={config.transferKeywords}
+              wfAccounts={wfAccounts}
             />
           </TabsContent>
           <TabsContent value="settings" className="mt-0">

@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActivityDetails } from '@wealthfolio/addon-sdk';
 import { createMockHost } from '../../test/mockHost';
 import type { StagedCandidate } from '../storage/staging';
-import { describeWithdrawals, findInflowActivity, resolveAmbiguous, runReconciliation } from './reconciliation';
+import {
+  describeWithdrawals,
+  findBackfillCandidates,
+  findInflowActivity,
+  resolveAmbiguous,
+  runReconciliation,
+} from './reconciliation';
 
 const NOW = 1754438400 + 5 * 86_400; // 5 days after the fixtures' posted date
 
@@ -12,6 +18,7 @@ const candidate = (over: Partial<StagedCandidate> = {}): StagedCandidate => ({
   inflowActivityId: null,
   inflowActivityType: 'CREDIT',
   amount: '50.00',
+  currency: 'USD',
   postedDate: '2025-08-06',
   comment: 'Online Payment Thank You',
   status: 'pending',
@@ -246,6 +253,21 @@ describe('runReconciliation', () => {
     expect(host.api.activities.search).not.toHaveBeenCalled();
   });
 
+  it('never expires a backfilled candidate, however old its posted date', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const old = candidate({ postedDate: '2025-07-01', backfilled: true });
+    const { candidates, summary } = await runReconciliation(host.api, [old], ['WF-CASH'], NOW);
+
+    expect(summary.expired).toBe(0);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].status).toBe('pending');
+  });
+
   it('isolates a per-candidate failure so other candidates still resolve', async () => {
     const host = createMockHost();
     host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { accountIds: string[]; activityTypes: string }) => {
@@ -407,6 +429,188 @@ describe('describeWithdrawals', () => {
 
     const found = await describeWithdrawals(host.api, ['WF-CASH'], ['A', 'C']);
     expect(found.map((r) => r.id).sort()).toEqual(['A', 'C']);
+  });
+});
+
+describe('findBackfillCandidates', () => {
+  it('stages a CREDIT activity whose comment matches a payment keyword', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const found = await findBackfillCandidates(host.api, ['WF-CARD'], ['PAYMENT', 'AUTOPAY', 'THANK YOU'], [], [], []);
+
+    expect(found).toEqual([
+      {
+        sfTransactionId: 'CARD-ACT-1',
+        inflowAccountId: 'WF-CARD',
+        inflowActivityId: 'CARD-ACT-1',
+        inflowActivityType: 'CREDIT',
+        amount: '50',
+        currency: 'USD',
+        postedDate: '2025-08-06',
+        comment: 'Online Payment Thank You',
+        status: 'pending',
+        candidateWithdrawalIds: [],
+        backfilled: true,
+      },
+    ]);
+  });
+
+  it('ignores a CREDIT activity whose comment matches no payment keyword', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async () => ({
+      data: [cardActivity({ comment: 'Grocery Store Refund' })],
+      meta: { totalRowCount: 1 },
+    })) as never;
+
+    const found = await findBackfillCandidates(host.api, ['WF-CARD'], ['PAYMENT', 'AUTOPAY', 'THANK YOU'], [], [], []);
+
+    expect(found).toEqual([]);
+  });
+
+  it('skips an activity already resolved to the same inflowActivityId in existing staging', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async () => ({ data: [cardActivity()], meta: { totalRowCount: 1 } })) as never;
+
+    const found = await findBackfillCandidates(
+      host.api,
+      ['WF-CARD'],
+      ['PAYMENT'],
+      [],
+      [],
+      [candidate({ inflowActivityId: 'CARD-ACT-1' })],
+    );
+
+    expect(found).toEqual([]);
+  });
+
+  it('skips an activity matching an unresolved existing candidate by amount/date/comment', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async () => ({ data: [cardActivity()], meta: { totalRowCount: 1 } })) as never;
+
+    const found = await findBackfillCandidates(
+      host.api,
+      ['WF-CARD'],
+      ['PAYMENT'],
+      [],
+      [],
+      [candidate({ inflowActivityId: null, amount: '50', postedDate: '2025-08-06', comment: 'Online Payment Thank You' })],
+    );
+
+    expect(found).toEqual([]);
+  });
+
+  it('does not skip a same amount/date/comment activity on a different card account', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') {
+        return { data: [cardActivity({ id: 'CARD-ACT-OTHER', accountId: 'WF-CARD-2' })], meta: { totalRowCount: 1 } };
+      }
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const found = await findBackfillCandidates(
+      host.api,
+      ['WF-CARD-2'],
+      ['PAYMENT'],
+      [],
+      [],
+      [
+        candidate({
+          inflowAccountId: 'WF-CARD',
+          inflowActivityId: null,
+          amount: '50',
+          postedDate: '2025-08-06',
+          comment: 'Online Payment Thank You',
+        }),
+      ],
+    );
+
+    expect(found).toEqual([
+      expect.objectContaining({ sfTransactionId: 'CARD-ACT-OTHER', inflowAccountId: 'WF-CARD-2' }),
+    ]);
+  });
+
+  it('returns nothing and never searches when no card or cash accounts are given', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn();
+
+    const found = await findBackfillCandidates(host.api, [], ['PAYMENT'], [], ['TRANSFER'], []);
+
+    expect(found).toEqual([]);
+    expect(host.api.activities.search).not.toHaveBeenCalled();
+  });
+
+  it('stages a DEPOSIT activity on a cash account whose comment matches a transfer keyword', async () => {
+    const host = createMockHost();
+    const depositActivity = cardActivity({
+      id: 'DEPOSIT-ACT-1',
+      accountId: 'WF-SAVINGS',
+      activityType: 'DEPOSIT',
+      comment: 'Online Transfer From Checking',
+    });
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'DEPOSIT') return { data: [depositActivity], meta: { totalRowCount: 1 } };
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const found = await findBackfillCandidates(host.api, [], ['PAYMENT'], ['WF-SAVINGS'], ['TRANSFER'], []);
+
+    expect(found).toEqual([
+      {
+        sfTransactionId: 'DEPOSIT-ACT-1',
+        inflowAccountId: 'WF-SAVINGS',
+        inflowActivityId: 'DEPOSIT-ACT-1',
+        inflowActivityType: 'DEPOSIT',
+        amount: '50',
+        currency: 'USD',
+        postedDate: '2025-08-06',
+        comment: 'Online Transfer From Checking',
+        status: 'pending',
+        candidateWithdrawalIds: [],
+        backfilled: true,
+      },
+    ]);
+  });
+
+  it('checks the card scan against paymentKeywords only and the cash scan against transferKeywords only', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') {
+        // Matches transferKeywords, not paymentKeywords — must not be staged.
+        return { data: [cardActivity({ comment: 'Online Transfer From Checking' })], meta: { totalRowCount: 1 } };
+      }
+      // Matches paymentKeywords, not transferKeywords — must not be staged.
+      return {
+        data: [cardActivity({ id: 'DEPOSIT-ACT-1', accountId: 'WF-SAVINGS', activityType: 'DEPOSIT', comment: 'Online Payment Thank You' })],
+        meta: { totalRowCount: 1 },
+      };
+    }) as never;
+
+    const found = await findBackfillCandidates(host.api, ['WF-CARD'], ['PAYMENT'], ['WF-SAVINGS'], ['TRANSFER'], []);
+
+    expect(found).toEqual([]);
+  });
+
+  it('combines card and cash backfill candidates from a single call', async () => {
+    const host = createMockHost();
+    const depositActivity = cardActivity({
+      id: 'DEPOSIT-ACT-1',
+      accountId: 'WF-SAVINGS',
+      activityType: 'DEPOSIT',
+      comment: 'Online Transfer From Checking',
+    });
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'CREDIT') return { data: [cardActivity()], meta: { totalRowCount: 1 } };
+      return { data: [depositActivity], meta: { totalRowCount: 1 } };
+    }) as never;
+
+    const found = await findBackfillCandidates(host.api, ['WF-CARD'], ['PAYMENT'], ['WF-SAVINGS'], ['TRANSFER'], []);
+
+    expect(found.map((c) => c.sfTransactionId).sort()).toEqual(['CARD-ACT-1', 'DEPOSIT-ACT-1']);
   });
 });
 
