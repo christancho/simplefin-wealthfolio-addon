@@ -396,10 +396,11 @@ describe('runSync', () => {
     await runSync(host.api, cardConfig);
 
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'ACT-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-PAY' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-PAY' }),
       ],
+      deleteIds: ['CARD-ACT-1', 'CASH-ACT-1'],
     });
     expect(await readStaging(host.api)).toEqual([]);
   });
@@ -492,10 +493,11 @@ describe('runSync', () => {
     await runSync(host.api, transferConfig);
 
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'DEPOSIT-ACT-1', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'CHECKING-WD-1', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-SAVINGS', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-XFER' }),
+        expect.objectContaining({ accountId: 'WF-CHECKING', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-XFER' }),
       ],
+      deleteIds: ['DEPOSIT-ACT-1', 'CHECKING-WD-1'],
     });
     expect(await readStaging(host.api)).toEqual([]);
   });

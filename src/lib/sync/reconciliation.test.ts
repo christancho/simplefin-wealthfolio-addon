@@ -64,10 +64,11 @@ describe('runReconciliation', () => {
     expect(candidates).toHaveLength(0);
     expect(summary.resolved).toBe(1);
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-1' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-1' }),
       ],
+      deleteIds: ['CARD-ACT-1', 'CASH-ACT-1'],
     });
   });
 
@@ -102,10 +103,11 @@ describe('runReconciliation', () => {
     expect(candidates).toHaveLength(0);
     expect(summary.resolved).toBe(1);
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'DEPOSIT-ACT-1', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CASH-B', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-1' }),
+        expect.objectContaining({ accountId: 'WF-CASH-A', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-1' }),
       ],
+      deleteIds: ['DEPOSIT-ACT-1', 'CASH-ACT-1'],
     });
   });
 
@@ -630,10 +632,11 @@ describe('resolveAmbiguous', () => {
     );
 
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'CARD-ACT-1', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-1' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-1' }),
       ],
+      deleteIds: ['CARD-ACT-1', 'CASH-ACT-1'],
     });
   });
 
@@ -664,10 +667,11 @@ describe('resolveAmbiguous', () => {
     );
 
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'DEPOSIT-ACT-1', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'CASH-ACT-1', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CASH-B', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-1' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-1' }),
       ],
+      deleteIds: ['DEPOSIT-ACT-1', 'CASH-ACT-1'],
     });
   });
 

@@ -1,4 +1,4 @@
-import type { ActivityDetails, ActivityUpdate, HostAPI } from '@wealthfolio/addon-sdk';
+import type { ActivityCreate, ActivityDetails, HostAPI } from '@wealthfolio/addon-sdk';
 import type { InflowActivityType, StagedCandidate } from '../storage/staging';
 import { isPaymentCandidate } from './activities';
 import { normalise } from './balance';
@@ -181,29 +181,33 @@ export async function findBackfillCandidates(
   return [...cardCandidates, ...cashCandidates];
 }
 
-function toUpdate(row: ActivityDetails, activityType: string): ActivityUpdate {
+function toCreate(row: ActivityDetails, activityType: string, sourceGroupId: string): ActivityCreate {
   return {
-    id: row.id,
     accountId: row.accountId,
     activityType,
     activityDate: row.date,
     amount: row.amount,
     currency: row.currency,
     comment: row.comment,
+    sourceGroupId,
   };
 }
 
 /**
- * `sourceGroupId` is deliberately not set here — confirmed against a live
- * host that `activities.update()` doesn't persist it, so there is no
- * host-side visual pairing available; the two legs are linked only by the
- * staging record until it's dropped.
+ * Reclassifying via `activities.update()` was tried first (see the
+ * 2026-08-14 design doc) and confirmed against a live host to silently drop
+ * `sourceGroupId` — the two legs ended up correctly typed but never linked,
+ * which is invisible to `update()` but visible to Wealthfolio's own Data
+ * Consistency checker. A follow-up live-host probe (2026-08-26) confirmed
+ * `saveMany({ creates: [...] })` does persist it, so both legs are deleted
+ * and recreated instead of updated in place, linked by the candidate's own
+ * `sfTransactionId` as a shared `sourceGroupId`.
  *
- * Both legs are sent in a single `saveMany()` call rather than two
- * sequential `update()` calls: `findInflowActivity()` only ever searches
- * `candidate.inflowActivityType`, so if the inflow leg alone were
- * reclassified to `TRANSFER_IN` and the withdrawal leg's write then failed,
- * the next reconciliation attempt could never re-find the (now
+ * Both legs are still created/deleted in a single `saveMany()` call rather
+ * than sequential calls, for the same reason as before: `findInflowActivity()`
+ * only ever searches `candidate.inflowActivityType`, so if the inflow leg
+ * alone were recreated as `TRANSFER_IN` and the withdrawal leg's write then
+ * failed, the next reconciliation attempt could never re-find the (now
  * non-CREDIT/DEPOSIT) inflow activity — leaving the pair permanently
  * half-reclassified. One request, one failure path avoids that split-write
  * state.
@@ -222,7 +226,11 @@ async function reclassifyPair(
   sfTransactionId: string,
 ): Promise<void> {
   const result = await api.activities.saveMany({
-    updates: [toUpdate(inflowRow, 'TRANSFER_IN'), toUpdate(withdrawalRow, 'TRANSFER_OUT')],
+    creates: [
+      toCreate(inflowRow, 'TRANSFER_IN', sfTransactionId),
+      toCreate(withdrawalRow, 'TRANSFER_OUT', sfTransactionId),
+    ],
+    deleteIds: [inflowRow.id, withdrawalRow.id],
   });
   if (result.errors.length > 0) {
     throw new Error(

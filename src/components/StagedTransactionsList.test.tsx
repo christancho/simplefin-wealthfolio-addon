@@ -193,10 +193,11 @@ describe('StagedTransactionsList', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm/i }));
 
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'CARD-ACT-2', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'CASH-A', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-2' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-2' }),
       ],
+      deleteIds: ['CARD-ACT-2', 'CASH-A'],
     });
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
   });
@@ -275,10 +276,11 @@ describe('StagedTransactionsList', () => {
 
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'OLD-CARD-ACT', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'OLD-CASH-ACT', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'OLD-CARD-ACT' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'OLD-CARD-ACT' }),
       ],
+      deleteIds: ['OLD-CARD-ACT', 'OLD-CASH-ACT'],
     });
   });
 });
