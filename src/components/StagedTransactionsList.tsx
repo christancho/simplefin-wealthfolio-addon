@@ -130,7 +130,7 @@ export function StagedTransactionsList({
 
   const scanButton = (
     <Button size="sm" variant="outline" onClick={scanForOlderPayments} disabled={scanning}>
-      {scanning ? 'Scanning…' : 'Scan for older payments'}
+      {scanning ? 'Scanning…' : 'Scan for older payments and transfers'}
     </Button>
   );
 
