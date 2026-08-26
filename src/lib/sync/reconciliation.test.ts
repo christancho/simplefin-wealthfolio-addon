@@ -6,6 +6,7 @@ import {
   describeWithdrawals,
   findBackfillCandidates,
   findInflowActivity,
+  relinkUnlinkedTransferPairs,
   resolveAmbiguous,
   runReconciliation,
 } from './reconciliation';
@@ -51,6 +52,32 @@ const withdrawalActivity = (over: Partial<ActivityDetails> = {}): ActivityDetail
     comment: 'Bill Pay',
     fee: null,
     subtype: null,
+    ...over,
+  }) as ActivityDetails;
+
+const transferInActivity = (over: Partial<ActivityDetails> & { sourceGroupId?: string | null } = {}): ActivityDetails =>
+  ({
+    id: 'TIN-1',
+    accountId: 'WF-CARD',
+    activityType: 'TRANSFER_IN',
+    date: '2025-08-06T00:00:00+00:00',
+    amount: '50',
+    currency: 'USD',
+    comment: 'Old payment',
+    sourceGroupId: null,
+    ...over,
+  }) as ActivityDetails;
+
+const transferOutActivity = (over: Partial<ActivityDetails> & { sourceGroupId?: string | null } = {}): ActivityDetails =>
+  ({
+    id: 'TOUT-1',
+    accountId: 'WF-CASH',
+    activityType: 'TRANSFER_OUT',
+    date: '2025-08-05T00:00:00+00:00',
+    amount: '50',
+    currency: 'USD',
+    comment: 'Old withdrawal',
+    sourceGroupId: null,
     ...over,
   }) as ActivityDetails;
 
@@ -709,5 +736,131 @@ describe('resolveAmbiguous', () => {
     await expect(
       resolveAmbiguous(host.api, candidate({ inflowActivityId: 'CARD-ACT-1' }), ['WF-CASH'], 'GONE'),
     ).rejects.toThrow(/GONE/);
+  });
+});
+
+describe('relinkUnlinkedTransferPairs', () => {
+  it('relinks an unambiguous unlinked pair via saveMany, using the TRANSFER_IN id as sourceGroupId', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'TRANSFER_IN') return { data: [transferInActivity()], meta: { totalRowCount: 1 } };
+      if (filters.activityTypes === 'TRANSFER_OUT') return { data: [transferOutActivity()], meta: { totalRowCount: 1 } };
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
+
+    expect(result).toEqual({ relinked: 1, ambiguous: 0 });
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'TIN-1' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'TIN-1' }),
+      ],
+      deleteIds: ['TIN-1', 'TOUT-1'],
+    });
+  });
+
+  it('excludes a row that already has sourceGroupId set from matching entirely', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'TRANSFER_IN') {
+        return { data: [transferInActivity({ sourceGroupId: 'already-linked' })], meta: { totalRowCount: 1 } };
+      }
+      if (filters.activityTypes === 'TRANSFER_OUT') return { data: [transferOutActivity()], meta: { totalRowCount: 1 } };
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
+
+    expect(result).toEqual({ relinked: 0, ambiguous: 0 });
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
+  });
+
+  it('leaves a TRANSFER_IN with zero withdrawal matches unlinked', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'TRANSFER_IN') return { data: [transferInActivity()], meta: { totalRowCount: 1 } };
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
+
+    expect(result).toEqual({ relinked: 0, ambiguous: 0 });
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
+  });
+
+  it('counts ambiguous and does not call saveMany when 2+ matches exist for a row', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'TRANSFER_IN') return { data: [transferInActivity()], meta: { totalRowCount: 1 } };
+      if (filters.activityTypes === 'TRANSFER_OUT') {
+        return {
+          data: [transferOutActivity(), transferOutActivity({ id: 'TOUT-2', accountId: 'WF-CASH-2' })],
+          meta: { totalRowCount: 2 },
+        };
+      }
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH', 'WF-CASH-2']);
+
+    expect(result).toEqual({ relinked: 0, ambiguous: 1 });
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
+  });
+
+  it("isolates a per-row failure so a later row still relinks", async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'TRANSFER_IN') {
+        return {
+          // TIN-GOOD/TOUT-GOOD use a distinct amount (75 vs the default 50)
+          // so they can't cross-match with the BAD pair — both TRANSFER_IN
+          // rows would otherwise share the same default amount/date and
+          // both TRANSFER_OUT rows the same default account, making every
+          // row match both counterparts (ambiguous) instead of the intended
+          // one clean success / one clean failure.
+          data: [transferInActivity({ id: 'TIN-BAD' }), transferInActivity({ id: 'TIN-GOOD', amount: '75' })],
+          meta: { totalRowCount: 2 },
+        };
+      }
+      if (filters.activityTypes === 'TRANSFER_OUT') {
+        return {
+          data: [transferOutActivity({ id: 'TOUT-BAD' }), transferOutActivity({ id: 'TOUT-GOOD', amount: '75' })],
+          meta: { totalRowCount: 2 },
+        };
+      }
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+    host.api.activities.saveMany = vi.fn(async (req: { deleteIds?: string[] }) => {
+      if (req.deleteIds?.includes('TIN-BAD')) {
+        return { created: [], updated: [], deleted: [], createdMappings: [], errors: [{ id: 'TIN-BAD', action: 'create', message: 'boom' }] };
+      }
+      return { created: [], updated: [], deleted: [], createdMappings: [], errors: [] };
+    }) as never;
+
+    const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
+
+    expect(result.relinked).toBe(1);
+    expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('TIN-BAD'));
+  });
+
+  it('returns zero counts without searching when inflowAccountIds is empty', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn();
+
+    const result = await relinkUnlinkedTransferPairs(host.api, [], ['WF-CASH']);
+
+    expect(result).toEqual({ relinked: 0, ambiguous: 0 });
+    expect(host.api.activities.search).not.toHaveBeenCalled();
+  });
+
+  it('returns zero counts without searching when cashAccountIds is empty', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn();
+
+    const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], []);
+
+    expect(result).toEqual({ relinked: 0, ambiguous: 0 });
+    expect(host.api.activities.search).not.toHaveBeenCalled();
   });
 });

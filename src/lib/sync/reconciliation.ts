@@ -77,12 +77,19 @@ export async function findInflowActivity(api: HostAPI, candidate: StagedCandidat
 }
 
 /**
- * Filters an already-fetched withdrawal pool down to this candidate's
- * matches (same amount, posted within the match window, in an account other
- * than the candidate's own inflow account). Pure and synchronous on purpose
- * — the withdrawal pool is identical for every candidate in a run, so
- * callers fetch it once via `searchAllByType` and reuse it across
- * candidates rather than re-fetching per candidate.
+ * The subset of a candidate's fields `withdrawalMatches` actually needs —
+ * lets a non-candidate caller (`relinkUnlinkedTransferPairs`) reuse the same
+ * matching logic without constructing a full `StagedCandidate`.
+ */
+type MatchTarget = Pick<StagedCandidate, 'inflowAccountId' | 'amount' | 'postedDate'>;
+
+/**
+ * Filters an already-fetched withdrawal pool down to this target's matches
+ * (same amount, posted within the match window, in an account other than
+ * the target's own inflow account). Pure and synchronous on purpose — the
+ * withdrawal pool is identical for every candidate in a run, so callers
+ * fetch it once via `searchAllByType` and reuse it across candidates rather
+ * than re-fetching per candidate.
  *
  * The same-account exclusion matters only for a cash-to-cash transfer
  * candidate — its own account is part of the withdrawal search pool, unlike
@@ -90,15 +97,15 @@ export async function findInflowActivity(api: HostAPI, candidate: StagedCandidat
  * excludes from that pool. Without it, a transfer's destination account
  * could match a withdrawal sitting in that very account.
  */
-function withdrawalMatches(withdrawals: ActivityDetails[], candidate: StagedCandidate): ActivityDetails[] {
-  const inflowPostedSeconds = Date.parse(candidate.postedDate) / 1000;
+function withdrawalMatches(withdrawals: ActivityDetails[], target: MatchTarget): ActivityDetails[] {
+  const inflowPostedSeconds = Date.parse(target.postedDate) / 1000;
   const windowStartSeconds = inflowPostedSeconds - MATCH_WINDOW_DAYS * SECONDS_PER_DAY;
 
   return withdrawals.filter((w) => {
-    if (w.accountId === candidate.inflowAccountId) return false;
+    if (w.accountId === target.inflowAccountId) return false;
     const postedSeconds = Date.parse(toIsoDateOnly(w.date)) / 1000;
     return (
-      normalise(w.amount ?? '0') === normalise(candidate.amount) &&
+      normalise(w.amount ?? '0') === normalise(target.amount) &&
       postedSeconds >= windowStartSeconds &&
       postedSeconds <= inflowPostedSeconds
     );
@@ -373,4 +380,78 @@ export async function resolveAmbiguous(
   }
 
   await reclassifyPair(api, inflowRow, withdrawalRow, candidate.sfTransactionId);
+}
+
+/**
+ * `sourceGroupId` is on the host's `Activity` model but missing from the
+ * SDK's `ActivityDetails` type — confirmed present in the runtime JSON
+ * regardless (2026-08-26 live probe, see the design doc). This cast is the
+ * one place that gap is bridged; every other read goes through this
+ * function.
+ */
+function sourceGroupIdOf(row: ActivityDetails): string | null {
+  return ((row as unknown as Record<string, unknown>).sourceGroupId as string | null | undefined) ?? null;
+}
+
+export interface RelinkSummary {
+  relinked: number;
+  ambiguous: number;
+}
+
+/**
+ * Finds `TRANSFER_IN`/`TRANSFER_OUT` activities reclassified before
+ * `sourceGroupId` linking existed (or by any other means that left them
+ * unlinked) and relinks unambiguous 1:1 matches via `reclassifyPair`.
+ *
+ * Deliberately does not surface ambiguous matches for manual resolution the
+ * way live candidates do — every existing pair here was created by a past
+ * *unambiguous* match (that's the only way `reclassifyPair` is ever
+ * called), so re-deriving that same match now should essentially never
+ * produce ambiguity. `ambiguous` is counted so a caller can still report it,
+ * but the pair is simply left alone rather than staged.
+ */
+export async function relinkUnlinkedTransferPairs(
+  api: HostAPI,
+  inflowAccountIds: string[],
+  cashAccountIds: string[],
+): Promise<RelinkSummary> {
+  if (inflowAccountIds.length === 0 || cashAccountIds.length === 0) {
+    return { relinked: 0, ambiguous: 0 };
+  }
+
+  const [transferIns, transferOuts] = await Promise.all([
+    searchAllByType(api, inflowAccountIds, 'TRANSFER_IN'),
+    searchAllByType(api, cashAccountIds, 'TRANSFER_OUT'),
+  ]);
+  const unlinkedIns = transferIns.filter((r) => !sourceGroupIdOf(r));
+  const unlinkedOuts = transferOuts.filter((r) => !sourceGroupIdOf(r));
+
+  let relinked = 0;
+  let ambiguous = 0;
+  const claimedOutIds = new Set<string>();
+
+  for (const inRow of unlinkedIns) {
+    const target: MatchTarget = {
+      inflowAccountId: inRow.accountId,
+      amount: inRow.amount ?? '0',
+      postedDate: toIsoDateOnly(inRow.date),
+    };
+    const matches = withdrawalMatches(unlinkedOuts, target).filter((o) => !claimedOutIds.has(o.id));
+
+    if (matches.length === 0) continue;
+    if (matches.length > 1) {
+      ambiguous += 1;
+      continue;
+    }
+
+    try {
+      await reclassifyPair(api, inRow, matches[0], inRow.id);
+      claimedOutIds.add(matches[0].id);
+      relinked += 1;
+    } catch (error) {
+      api.logger.error(`[simplefin] relink failed for TRANSFER_IN ${inRow.id}: ${String(error)}`);
+    }
+  }
+
+  return { relinked, ambiguous };
 }
