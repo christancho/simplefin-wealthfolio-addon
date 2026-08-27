@@ -227,7 +227,7 @@ describe('StagedTransactionsList', () => {
     render(<StagedTransactionsList api={host.api} {...defaultProps} />);
     await screen.findByText(/no staged transactions/i);
 
-    await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
+    await userEvent.click(screen.getByRole('button', { name: /scan for older/i }));
 
     expect(await screen.findByText('$75.00')).toBeInTheDocument();
     expect(screen.getByText('pending')).toBeInTheDocument();
@@ -272,7 +272,7 @@ describe('StagedTransactionsList', () => {
     render(<StagedTransactionsList api={host.api} {...defaultProps} />);
     await screen.findByText(/no staged transactions/i);
 
-    await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
+    await userEvent.click(screen.getByRole('button', { name: /scan for older/i }));
 
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
@@ -325,7 +325,7 @@ describe('StagedTransactionsList', () => {
     render(<StagedTransactionsList api={host.api} {...defaultProps} />);
     await screen.findByText(/no staged transactions/i);
 
-    await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
+    await userEvent.click(screen.getByRole('button', { name: /scan for older/i }));
 
     expect(await screen.findByText(/relinked 1 transfer pair/i)).toBeInTheDocument();
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
