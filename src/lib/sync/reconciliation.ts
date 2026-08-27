@@ -200,6 +200,9 @@ function toCreate(row: ActivityDetails, activityType: string, sourceGroupId: str
     currency: row.currency,
     comment: row.comment,
     fee: row.fee,
+    tax: row.tax,
+    fxRate: row.fxRate,
+    metadata: row.metadata,
     subtype: row.subtype,
     sourceGroupId,
   };
@@ -395,20 +398,30 @@ function sourceGroupIdOf(row: ActivityDetails): string | null {
 
 export interface RelinkSummary {
   relinked: number;
+  unmatched: number;
   ambiguous: number;
+  failed: number;
 }
 
 /**
- * Finds `TRANSFER_IN`/`TRANSFER_OUT` activities reclassified before
- * `sourceGroupId` linking existed (or by any other means that left them
- * unlinked) and relinks unambiguous 1:1 matches via `reclassifyPair`.
+ * Finds any `TRANSFER_IN`/`TRANSFER_OUT` activity in the mapped accounts
+ * that is missing `sourceGroupId` and relinks unambiguous 1:1 matches via
+ * `reclassifyPair`. This is deliberately provenance-agnostic: it doesn't
+ * matter whether a row was reclassified by this addon before `sourceGroupId`
+ * linking existed, entered manually, imported from a CSV, or created by
+ * another addon entirely — Wealthfolio's own Data Consistency checker
+ * doesn't care about provenance either, only about whether the link exists.
  *
- * Deliberately does not surface ambiguous matches for manual resolution the
- * way live candidates do — every existing pair here was created by a past
- * *unambiguous* match (that's the only way `reclassifyPair` is ever
- * called), so re-deriving that same match now should essentially never
- * produce ambiguity. `ambiguous` is counted so a caller can still report it,
- * but the pair is simply left alone rather than staged.
+ * Matching runs in passes: a row with 2+ candidates is set aside as
+ * ambiguous for the pass rather than staged, then retried in the next pass,
+ * since another row's successful claim can shrink its candidate pool down to
+ * exactly one. A row with zero matches is never retried — claiming a
+ * `TRANSFER_OUT` elsewhere can't conjure up a new match for a row that
+ * already had none. Passes stop once one makes no further progress, at which
+ * point any rows still ambiguous are counted and left alone rather than
+ * staged for manual resolution — the same reasoning as before: every
+ * existing pair was originally created by *some* unambiguous match, so
+ * lingering ambiguity here should be rare.
  */
 export async function relinkUnlinkedTransferPairs(
   api: HostAPI,
@@ -416,7 +429,7 @@ export async function relinkUnlinkedTransferPairs(
   cashAccountIds: string[],
 ): Promise<RelinkSummary> {
   if (inflowAccountIds.length === 0 || cashAccountIds.length === 0) {
-    return { relinked: 0, ambiguous: 0 };
+    return { relinked: 0, unmatched: 0, ambiguous: 0, failed: 0 };
   }
 
   const [transferIns, transferOuts] = await Promise.all([
@@ -426,32 +439,55 @@ export async function relinkUnlinkedTransferPairs(
   const unlinkedIns = transferIns.filter((r) => !sourceGroupIdOf(r));
   const unlinkedOuts = transferOuts.filter((r) => !sourceGroupIdOf(r));
 
+  api.logger.info(
+    `[simplefin] relink scan: ${unlinkedIns.length}/${transferIns.length} TRANSFER_IN unlinked, ${unlinkedOuts.length}/${transferOuts.length} TRANSFER_OUT unlinked`,
+  );
+
   let relinked = 0;
+  let unmatched = 0;
   let ambiguous = 0;
+  let failed = 0;
   const claimedOutIds = new Set<string>();
 
-  for (const inRow of unlinkedIns) {
-    const target: MatchTarget = {
-      inflowAccountId: inRow.accountId,
-      amount: inRow.amount ?? '0',
-      postedDate: toIsoDateOnly(inRow.date),
-    };
-    const matches = withdrawalMatches(unlinkedOuts, target).filter((o) => !claimedOutIds.has(o.id));
+  let pending = unlinkedIns;
+  for (;;) {
+    const stillAmbiguous: ActivityDetails[] = [];
+    let progressed = false;
 
-    if (matches.length === 0) continue;
-    if (matches.length > 1) {
-      ambiguous += 1;
-      continue;
+    for (const inRow of pending) {
+      const target: MatchTarget = {
+        inflowAccountId: inRow.accountId,
+        amount: inRow.amount ?? '0',
+        postedDate: toIsoDateOnly(inRow.date),
+      };
+      const matches = withdrawalMatches(unlinkedOuts, target).filter((o) => !claimedOutIds.has(o.id));
+
+      if (matches.length === 0) {
+        unmatched += 1;
+        continue;
+      }
+      if (matches.length > 1) {
+        stillAmbiguous.push(inRow);
+        continue;
+      }
+
+      try {
+        await reclassifyPair(api, inRow, matches[0], inRow.id);
+        claimedOutIds.add(matches[0].id);
+        relinked += 1;
+        progressed = true;
+      } catch (error) {
+        api.logger.error(`[simplefin] relink failed for TRANSFER_IN ${inRow.id}: ${String(error)}`);
+        failed += 1;
+      }
     }
 
-    try {
-      await reclassifyPair(api, inRow, matches[0], inRow.id);
-      claimedOutIds.add(matches[0].id);
-      relinked += 1;
-    } catch (error) {
-      api.logger.error(`[simplefin] relink failed for TRANSFER_IN ${inRow.id}: ${String(error)}`);
+    if (!progressed || stillAmbiguous.length === 0) {
+      ambiguous += stillAmbiguous.length;
+      break;
     }
+    pending = stillAmbiguous;
   }
 
-  return { relinked, ambiguous };
+  return { relinked, unmatched, ambiguous, failed };
 }

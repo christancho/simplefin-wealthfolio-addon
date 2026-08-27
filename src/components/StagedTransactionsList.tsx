@@ -124,9 +124,9 @@ export function StagedTransactionsList({
       setCandidates(remaining);
       await writeStaging(api, remaining);
 
-      const { relinked, ambiguous } = await relinkUnlinkedTransferPairs(api, [...cardAccountIds, ...cashAccountIds], cashAccountIds);
+      const { relinked, unmatched, ambiguous, failed } = await relinkUnlinkedTransferPairs(api, [...cardAccountIds, ...cashAccountIds], cashAccountIds);
       setScanResult(
-        `Found ${found.length} new candidate${found.length === 1 ? '' : 's'}. Relinked ${relinked} pair${relinked === 1 ? '' : 's'}, ${ambiguous} ambiguous.`,
+        `Found ${found.length} new candidate${found.length === 1 ? '' : 's'}. Relinked ${relinked} transfer pair${relinked === 1 ? '' : 's'}: ${unmatched} had no match, ${ambiguous} had multiple candidates, ${failed} failed.`,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

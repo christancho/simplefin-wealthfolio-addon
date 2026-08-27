@@ -327,7 +327,7 @@ describe('StagedTransactionsList', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
 
-    expect(await screen.findByText(/relinked 1 pair/i)).toBeInTheDocument();
+    expect(await screen.findByText(/relinked 1 transfer pair/i)).toBeInTheDocument();
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
       creates: [
         expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'OLD-TIN-1' }),

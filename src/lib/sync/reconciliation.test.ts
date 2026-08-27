@@ -750,7 +750,7 @@ describe('relinkUnlinkedTransferPairs', () => {
 
     const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
 
-    expect(result).toEqual({ relinked: 1, ambiguous: 0 });
+    expect(result).toEqual({ relinked: 1, unmatched: 0, ambiguous: 0, failed: 0 });
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
       creates: [
         expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'TIN-1' }),
@@ -772,7 +772,7 @@ describe('relinkUnlinkedTransferPairs', () => {
 
     const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
 
-    expect(result).toEqual({ relinked: 0, ambiguous: 0 });
+    expect(result).toEqual({ relinked: 0, unmatched: 0, ambiguous: 0, failed: 0 });
     expect(host.api.activities.saveMany).not.toHaveBeenCalled();
   });
 
@@ -785,7 +785,7 @@ describe('relinkUnlinkedTransferPairs', () => {
 
     const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
 
-    expect(result).toEqual({ relinked: 0, ambiguous: 0 });
+    expect(result).toEqual({ relinked: 0, unmatched: 1, ambiguous: 0, failed: 0 });
     expect(host.api.activities.saveMany).not.toHaveBeenCalled();
   });
 
@@ -804,7 +804,7 @@ describe('relinkUnlinkedTransferPairs', () => {
 
     const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH', 'WF-CASH-2']);
 
-    expect(result).toEqual({ relinked: 0, ambiguous: 1 });
+    expect(result).toEqual({ relinked: 0, unmatched: 0, ambiguous: 1, failed: 0 });
     expect(host.api.activities.saveMany).not.toHaveBeenCalled();
   });
 
@@ -840,7 +840,7 @@ describe('relinkUnlinkedTransferPairs', () => {
 
     const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
 
-    expect(result.relinked).toBe(1);
+    expect(result).toEqual({ relinked: 1, unmatched: 0, ambiguous: 0, failed: 1 });
     expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('TIN-BAD'));
   });
 
@@ -850,7 +850,7 @@ describe('relinkUnlinkedTransferPairs', () => {
 
     const result = await relinkUnlinkedTransferPairs(host.api, [], ['WF-CASH']);
 
-    expect(result).toEqual({ relinked: 0, ambiguous: 0 });
+    expect(result).toEqual({ relinked: 0, unmatched: 0, ambiguous: 0, failed: 0 });
     expect(host.api.activities.search).not.toHaveBeenCalled();
   });
 
@@ -860,7 +860,46 @@ describe('relinkUnlinkedTransferPairs', () => {
 
     const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], []);
 
-    expect(result).toEqual({ relinked: 0, ambiguous: 0 });
+    expect(result).toEqual({ relinked: 0, unmatched: 0, ambiguous: 0, failed: 0 });
     expect(host.api.activities.search).not.toHaveBeenCalled();
+  });
+
+  it('does not let a second TRANSFER_IN double-claim a TRANSFER_OUT already claimed this run', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'TRANSFER_IN') {
+        return {
+          data: [transferInActivity({ id: 'TIN-1' }), transferInActivity({ id: 'TIN-2' })],
+          meta: { totalRowCount: 2 },
+        };
+      }
+      if (filters.activityTypes === 'TRANSFER_OUT') {
+        // Only one real TRANSFER_OUT exists to match against both TRANSFER_IN rows.
+        return { data: [transferOutActivity()], meta: { totalRowCount: 1 } };
+      }
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
+
+    expect(result.relinked).toBe(1);
+    expect(host.api.activities.saveMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('excludes a TRANSFER_OUT row that already has sourceGroupId set from matching', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'TRANSFER_IN') return { data: [transferInActivity()], meta: { totalRowCount: 1 } };
+      if (filters.activityTypes === 'TRANSFER_OUT') {
+        return { data: [transferOutActivity({ sourceGroupId: 'already-linked' })], meta: { totalRowCount: 1 } };
+      }
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    const result = await relinkUnlinkedTransferPairs(host.api, ['WF-CARD'], ['WF-CASH']);
+
+    expect(result.relinked).toBe(0);
+    expect(result.unmatched).toBe(1);
+    expect(host.api.activities.saveMany).not.toHaveBeenCalled();
   });
 });
