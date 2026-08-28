@@ -137,7 +137,7 @@ export function StagedTransactionsList({
 
   const scanButton = (
     <div className="flex flex-col items-start gap-1">
-      <Button size="sm" variant="outline" className="h-auto max-w-md whitespace-normal text-left" onClick={scanForOlderPayments} disabled={scanning}>
+      <Button size="sm" className="h-auto max-w-md whitespace-normal text-left" onClick={scanForOlderPayments} disabled={scanning}>
         {scanning ? 'Scanning…' : 'Scan for older credit card payments, bank transfers and unlinked transfer pairs'}
       </Button>
       {scanResult && <p className="text-muted-foreground text-sm">{scanResult}</p>}
