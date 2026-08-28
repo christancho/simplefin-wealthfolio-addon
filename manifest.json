@@ -1,21 +1,22 @@
 {
-  "id": "simplefin-sync",
+  "id": "simplefin-wealthfolio-addon",
   "name": "SimpleFIN Sync",
   "version": "1.0.0",
   "description": "Sync bank, credit-card and investment data from SimpleFIN Bridge into Wealthfolio.",
-  "author": "christancho",
+  "author": "Christian Mendieta",
+  "homepage": "https://github.com/christancho/simplefin-wealthfolio-addon",
   "main": "dist/addon.js",
   "sdkVersion": "3.6.2",
   "minWealthfolioVersion": "3.6.2",
   "enabled": true,
   "repository": "https://github.com/christancho/simplefin-wealthfolio-addon",
   "contributes": {
-    "routes": [{ "id": "simplefin-sync" }],
+    "routes": [{ "id": "simplefin-wealthfolio-addon" }],
     "links": {
       "sidebar": [
         {
-          "id": "simplefin-sync",
-          "route": "simplefin-sync",
+          "id": "simplefin-wealthfolio-addon",
+          "route": "simplefin-wealthfolio-addon",
           "label": "SimpleFIN Sync",
           "icon": "plugs-connected",
           "order": 100
@@ -47,9 +48,10 @@
       "functions": [
         { "name": "set", "isDeclared": true, "isDetected": false },
         { "name": "get", "isDeclared": true, "isDetected": false },
+        { "name": "use", "isDeclared": true, "isDetected": false },
         { "name": "delete", "isDeclared": true, "isDetected": false }
       ],
-      "purpose": "Store the SimpleFIN access credentials in the system keyring."
+      "purpose": "Store the SimpleFIN access credentials in the system keyring, and let the host attach them to brokered SimpleFIN Bridge requests without exposing the plaintext to the addon."
     },
     {
       "category": "accounts",
@@ -63,9 +65,11 @@
       "category": "activities",
       "functions": [
         { "name": "checkImport", "isDeclared": true, "isDetected": false },
-        { "name": "import", "isDeclared": true, "isDetected": false }
+        { "name": "import", "isDeclared": true, "isDetected": false },
+        { "name": "search", "isDeclared": true, "isDetected": false },
+        { "name": "saveMany", "isDeclared": true, "isDetected": false }
       ],
-      "purpose": "Import cash transactions fetched from SimpleFIN."
+      "purpose": "Import cash transactions fetched from SimpleFIN, and reconcile credit-card payments and cash-to-cash transfers into linked transfers."
     },
     {
       "category": "snapshots",
@@ -74,6 +78,14 @@
         { "name": "importSnapshots", "isDeclared": true, "isDetected": false }
       ],
       "purpose": "Import holdings snapshots for investment accounts."
+    },
+    {
+      "category": "portfolio",
+      "functions": [
+        { "name": "recalculate", "isDeclared": true, "isDetected": false },
+        { "name": "getLatestValuations", "isDeclared": true, "isDetected": false }
+      ],
+      "purpose": "Recalculate a CASH account's balance after backfilling its full history, so the opening-balance gap against SimpleFIN can be measured accurately."
     }
   ],
   "keywords": ["wealthfolio", "addon", "simplefin", "sync", "banking"],
