@@ -38,30 +38,53 @@ describe('buildOpeningBalanceActivity', () => {
       { sfBalance: '100.00', wfBalance: '100.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
       mapping,
       'USD',
+      'CASH',
     );
     expect(activity).toBeNull();
   });
 
-  it('builds a TRANSFER_IN when Wealthfolio is short of the SimpleFIN balance', () => {
+  it('builds a DEPOSIT when Wealthfolio is short of the SimpleFIN balance', () => {
     const activity = buildOpeningBalanceActivity(
       { sfBalance: '100.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
       mapping,
       'USD',
+      'CASH',
     );
-    expect(activity?.activityType).toBe('TRANSFER_IN');
+    expect(activity?.activityType).toBe('DEPOSIT');
     expect(activity?.amount).toBe('20.00');
     expect(activity?.accountId).toBe('WF-1');
     expect(activity?.currency).toBe('USD');
   });
 
-  it('builds a TRANSFER_OUT when Wealthfolio holds more than the SimpleFIN balance', () => {
+  it('builds a WITHDRAWAL when Wealthfolio holds more than the SimpleFIN balance', () => {
     const activity = buildOpeningBalanceActivity(
       { sfBalance: '50.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
       mapping,
       'USD',
+      'CASH',
     );
-    expect(activity?.activityType).toBe('TRANSFER_OUT');
+    expect(activity?.activityType).toBe('WITHDRAWAL');
     expect(activity?.amount).toBe('30.00');
+  });
+
+  it('builds a CREDIT instead of a DEPOSIT on a credit-card account', () => {
+    const activity = buildOpeningBalanceActivity(
+      { sfBalance: '100.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
+      mapping,
+      'USD',
+      'CREDIT_CARD',
+    );
+    expect(activity?.activityType).toBe('CREDIT');
+  });
+
+  it('still builds a WITHDRAWAL (not CREDIT) on a credit-card account when Wealthfolio holds more', () => {
+    const activity = buildOpeningBalanceActivity(
+      { sfBalance: '50.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
+      mapping,
+      'USD',
+      'CREDIT_CARD',
+    );
+    expect(activity?.activityType).toBe('WITHDRAWAL');
   });
 
   it('dates the entry one day before the earliest posted transaction', () => {
@@ -69,6 +92,7 @@ describe('buildOpeningBalanceActivity', () => {
       { sfBalance: '100.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
       mapping,
       'USD',
+      'CASH',
     );
     // earliestPosted 1754438400 -> 2025-08-06; one day before -> 2025-08-05
     expect(activity?.date).toBe('2025-08-05');
@@ -79,6 +103,7 @@ describe('buildOpeningBalanceActivity', () => {
       { sfBalance: '100.00', wfBalance: '0', earliestPosted: null, balanceDate: 1754524800 },
       mapping,
       'USD',
+      'CASH',
     );
     expect(activity?.date).toBe('2025-08-07');
   });
@@ -88,6 +113,7 @@ describe('buildOpeningBalanceActivity', () => {
       { sfBalance: '100.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
       mapping,
       'USD',
+      'CASH',
     );
     expect(activity?.symbol).toBe('');
   });

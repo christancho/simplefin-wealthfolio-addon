@@ -616,7 +616,7 @@ describe('runSync opening-balance backfill', () => {
     return { host, pushed };
   }
 
-  it('pushes a TRANSFER_IN opening-balance entry that closes the gap on first sync', async () => {
+  it('pushes a DEPOSIT opening-balance entry that closes the gap on first sync', async () => {
     const { host, pushed } = backfillHost('100.00', [
       { id: 'T1', posted: 1754438400, amount: '-10.00', description: 'X' },
     ]);
@@ -625,9 +625,21 @@ describe('runSync opening-balance backfill', () => {
 
     expect(pushed).toHaveLength(2);
     expect(pushed[0].activityType).toBe('WITHDRAWAL');
-    expect(pushed[1].activityType).toBe('TRANSFER_IN');
+    expect(pushed[1].activityType).toBe('DEPOSIT');
     expect(pushed[1].amount).toBe('110.00');
     expect(run.accounts[0].imported).toBe(2);
+  });
+
+  it('pushes a CREDIT instead of a DEPOSIT opening-balance entry on a credit-card account', async () => {
+    const { host, pushed } = backfillHost('100.00', [
+      { id: 'T1', posted: 1754438400, amount: '-10.00', description: 'X' },
+    ]);
+    host.api.accounts.getAll = vi.fn(async () => [{ id: 'WF-1', accountType: 'CREDIT_CARD', balance: 0 }] as never);
+
+    await runSync(host.api, backfillConfig);
+
+    expect(pushed).toHaveLength(2);
+    expect(pushed[1].activityType).toBe('CREDIT');
   });
 
   it('folds a pre-existing Wealthfolio balance into the plug instead of ignoring it', async () => {
@@ -650,7 +662,7 @@ describe('runSync opening-balance backfill', () => {
     await runSync(host.api, backfillConfig);
 
     expect(pushed).toHaveLength(2);
-    expect(pushed[1].activityType).toBe('TRANSFER_OUT');
+    expect(pushed[1].activityType).toBe('WITHDRAWAL');
     // sfBalance(100.00) - (preSync 500 + imported -10.00) = -390.00
     expect(pushed[1].amount).toBe('390.00');
   });
