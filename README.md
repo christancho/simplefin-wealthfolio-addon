@@ -108,9 +108,6 @@ Worth knowing before changing anything:
 - **`storage` has limits:** keys ≤128 chars from `[A-Za-z0-9_.:-]`, values
   ~250 KB. Use many small keys. `localStorage` is unavailable in the sandbox.
 
-Full design and rationale:
-[`docs/superpowers/specs/2026-08-07-simplefin-addon-design.md`](docs/superpowers/specs/2026-08-07-simplefin-addon-design.md).
-
 ---
 
 ## Troubleshooting
@@ -132,10 +129,8 @@ attempt), generate a fresh one in the SimpleFIN Bridge dashboard.
 
 ## Contributing
 
-Work is tracked in GitHub Issues and the project board. Branching, PR and
-promotion rules are in [`docs/git-strategy.md`](docs/git-strategy.md) — in
-short: branch from `dev` as `feature/{issue}-{slug}`, PR into `dev`, and
-include `Closes #N`.
+Work is tracked in GitHub Issues and the project board. In short: branch from
+`dev` as `feature/{issue}-{slug}`, PR into `dev`, and include `Closes #N`.
 
 ## License
 
