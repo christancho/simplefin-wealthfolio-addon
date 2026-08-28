@@ -61,3 +61,6 @@ credentials.json
 # reproducible; the fetched content itself is not, same as node_modules.
 .agents/
 .claude/skills/
+
+# Local agent session transcripts — not project source, not reproducible.
+.claude/chat-exports/

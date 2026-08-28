@@ -1,12 +1,11 @@
 # simplefin-wealthfolio-addon
 
+[![Latest release](https://img.shields.io/github/v/release/christancho/simplefin-wealthfolio-addon)](https://github.com/christancho/simplefin-wealthfolio-addon/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/christancho/simplefin-wealthfolio-addon)](LICENSE)
+
 Sync bank, credit-card and investment data from [SimpleFIN
 Bridge](https://bridge.simplefin.org) into [Wealthfolio](https://wealthfolio.app)
 — as a Wealthfolio **addon**, with no separate service to deploy.
-
-> **Status:** v1 in development. The skeleton builds and mounts; the sync
-> pipeline is being implemented against
-> [`docs/superpowers/plans/2026-08-07-simplefin-addon-v1.md`](docs/superpowers/plans/2026-08-07-simplefin-addon-v1.md).
 
 ---
 
@@ -59,10 +58,20 @@ rather not run another service.
 
 - **Wealthfolio 3.6.2+** (desktop or self-hosted) — the addon declares
   `minWealthfolioVersion: 3.6.2`
-- **Node.js 18+** and **pnpm**
 - A **SimpleFIN Bridge** account and a setup token
 
+## Installing
+
+1. Download the latest addon zip from the
+   [Releases page](https://github.com/christancho/simplefin-wealthfolio-addon/releases/latest).
+2. In Wealthfolio, go to **Settings → Addons → Install from file** and pick
+   the downloaded zip.
+3. Open the new **SimpleFIN Sync** page from the sidebar, paste your SimpleFIN
+   Bridge setup token, and map your accounts.
+
 ## Development
+
+Requires **Node.js 18+** and **pnpm**.
 
 ```bash
 pnpm install
@@ -104,6 +113,23 @@ Full design and rationale:
 
 ---
 
+## Troubleshooting
+
+**Claiming a setup token fails with a broker rejection.** A setup token is
+base64 of a claim URL, and the addon POSTs to whatever host that URL names.
+The network broker refuses any host not listed in `manifest.json` →
+`network.allowedHosts`, which declares `bridge.simplefin.org` and
+`beta-bridge.simplefin.org`. A token issued by a Bridge on some other host —
+a self-hosted or white-label deployment — is rejected by the broker before
+any request goes out. That is a manifest allowlist problem, not a code
+problem: add the host to `allowedHosts` and rebuild.
+
+**A setup token is refused with HTTP 403.** Setup tokens are single-use. If a
+claim was already made with that token (including a partially-failed
+attempt), generate a fresh one in the SimpleFIN Bridge dashboard.
+
+---
+
 ## Contributing
 
 Work is tracked in GitHub Issues and the project board. Branching, PR and
@@ -113,4 +139,4 @@ include `Closes #N`.
 
 ## License
 
-MIT
+[MIT](LICENSE)
