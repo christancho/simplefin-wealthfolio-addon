@@ -1,21 +1,22 @@
 {
-  "id": "simplefin-sync",
+  "id": "simplefin-wealthfolio-addon",
   "name": "SimpleFIN Sync",
   "version": "1.0.0",
   "description": "Sync bank, credit-card and investment data from SimpleFIN Bridge into Wealthfolio.",
-  "author": "christancho",
+  "author": "Christian Mendieta",
+  "homepage": "https://github.com/christancho/simplefin-wealthfolio-addon",
   "main": "dist/addon.js",
   "sdkVersion": "3.6.2",
   "minWealthfolioVersion": "3.6.2",
   "enabled": true,
   "repository": "https://github.com/christancho/simplefin-wealthfolio-addon",
   "contributes": {
-    "routes": [{ "id": "simplefin-sync" }],
+    "routes": [{ "id": "simplefin-wealthfolio-addon" }],
     "links": {
       "sidebar": [
         {
-          "id": "simplefin-sync",
-          "route": "simplefin-sync",
+          "id": "simplefin-wealthfolio-addon",
+          "route": "simplefin-wealthfolio-addon",
           "label": "SimpleFIN Sync",
           "icon": "plugs-connected",
           "order": 100

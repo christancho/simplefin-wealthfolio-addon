@@ -1,12 +1,11 @@
 # simplefin-wealthfolio-addon
 
+[![Latest release](https://img.shields.io/github/v/release/christancho/simplefin-wealthfolio-addon)](https://github.com/christancho/simplefin-wealthfolio-addon/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/christancho/simplefin-wealthfolio-addon)](LICENSE)
+
 Sync bank, credit-card and investment data from [SimpleFIN
 Bridge](https://bridge.simplefin.org) into [Wealthfolio](https://wealthfolio.app)
 — as a Wealthfolio **addon**, with no separate service to deploy.
-
-> **Status:** v1 in development. The skeleton builds and mounts; the sync
-> pipeline is being implemented against
-> [`docs/superpowers/plans/2026-08-07-simplefin-addon-v1.md`](docs/superpowers/plans/2026-08-07-simplefin-addon-v1.md).
 
 ---
 
@@ -59,10 +58,20 @@ rather not run another service.
 
 - **Wealthfolio 3.6.2+** (desktop or self-hosted) — the addon declares
   `minWealthfolioVersion: 3.6.2`
-- **Node.js 18+** and **pnpm**
 - A **SimpleFIN Bridge** account and a setup token
 
+## Installing
+
+1. Download the latest addon zip from the
+   [Releases page](https://github.com/christancho/simplefin-wealthfolio-addon/releases/latest).
+2. In Wealthfolio, go to **Settings → Addons → Install from file** and pick
+   the downloaded zip.
+3. Open the new **SimpleFIN Sync** page from the sidebar, paste your SimpleFIN
+   Bridge setup token, and map your accounts.
+
 ## Development
+
+Requires **Node.js 18+** and **pnpm**.
 
 ```bash
 pnpm install
@@ -130,4 +139,4 @@ include `Closes #N`.
 
 ## License
 
-MIT
+[MIT](LICENSE)
