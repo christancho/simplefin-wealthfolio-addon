@@ -62,8 +62,10 @@ rather not run another service.
 
 ## Installing
 
-1. Download the latest addon zip from the
-   [Releases page](https://github.com/christancho/simplefin-wealthfolio-addon/releases/latest).
+1. **[Download the latest addon zip](https://github.com/christancho/simplefin-wealthfolio-addon/releases/latest/download/simplefin-wealthfolio-addon.zip)**
+   (always points to the newest release — see the
+   [Releases page](https://github.com/christancho/simplefin-wealthfolio-addon/releases/latest)
+   for changelogs and older versions).
 2. In Wealthfolio, go to **Settings → Addons → Install from file** and pick
    the downloaded zip.
 3. Open the new **SimpleFIN Sync** page from the sidebar, paste your SimpleFIN
