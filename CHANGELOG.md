@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/christancho/simplefin-wealthfolio-addon/compare/v1.0.0...v1.1.0) (2026-08-28)
+
+
+### Features
+
+* add a stable download link to the README ([1ab1e86](https://github.com/christancho/simplefin-wealthfolio-addon/commit/1ab1e865fa852ce9ba34a9a75ab32ec9f1f7d207))
+
 # 1.0.0 (2026-08-28)
 
 
