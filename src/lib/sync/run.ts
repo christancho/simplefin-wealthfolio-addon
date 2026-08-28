@@ -51,7 +51,7 @@ async function fetchFullHistory(
 /**
  * Plugs the gap between SimpleFIN's current balance and whatever the
  * full-history pull actually landed in Wealthfolio, as one synthetic
- * TRANSFER_IN/OUT activity.
+ * DEPOSIT/WITHDRAWAL (or CREDIT on a credit-card account) activity.
  *
  * The post-import Wealthfolio balance is computed here, not read back from
  * the host: `portfolio.recalculate()` resolving is not a reliable signal
@@ -69,6 +69,7 @@ async function pushOpeningBalance(
   sfAccount: SfAccount,
   preSyncBalance: string | null,
   importedTxns: SfTransaction[],
+  destinationAccountType: AccountType,
 ): Promise<number> {
   const wfBalance = sumDecimal([preSyncBalance ?? '0', ...importedTxns.map((t) => t.amount)]);
 
@@ -84,6 +85,7 @@ async function pushOpeningBalance(
     },
     mapping,
     sfAccount.currency,
+    destinationAccountType,
   );
   if (!plug) return 0;
 
@@ -157,6 +159,7 @@ async function syncOne(
       ? ((await fetchFullHistory(api, baseUrl, mapping.sfAccountId)) ?? sfAccount)
       : sfAccount;
 
+    const destinationAccountType = wfAccountTypes.get(mapping.wfAccountId) ?? 'CASH';
     const {
       result,
       watermark: next,
@@ -167,7 +170,7 @@ async function syncOne(
       mapping,
       syncSfAccount,
       watermark,
-      wfAccountTypes.get(mapping.wfAccountId) ?? 'CASH',
+      destinationAccountType,
       paymentKeywords,
       transferKeywords,
     );
@@ -180,6 +183,7 @@ async function syncOne(
           syncSfAccount,
           wfBalances.get(mapping.wfAccountId) ?? null,
           importedTxns,
+          destinationAccountType,
         )
       : 0;
 

@@ -1,4 +1,4 @@
-import type { ActivityImport } from '@wealthfolio/addon-sdk';
+import type { AccountType, ActivityImport } from '@wealthfolio/addon-sdk';
 import type { AccountMapping } from '../storage/config';
 
 const SECONDS_PER_DAY = 86_400;
@@ -65,11 +65,20 @@ function isoDate(epochSeconds: number): string {
  * One-time synthetic activity that plugs the gap between SimpleFIN's current
  * balance and whatever landed in Wealthfolio from the full-history backfill —
  * returns null when there is no gap.
+ *
+ * Imported as `DEPOSIT`/`WITHDRAWAL` (or `CREDIT` in place of `DEPOSIT` on a
+ * credit-card account, mirroring `toActivityImport`), never `TRANSFER_IN`/
+ * `TRANSFER_OUT` — this plug has no counterparty leg by construction (it's
+ * money the account already had before this addon started tracking it, not a
+ * transfer between two tracked accounts), so typing it as a transfer would
+ * leave it permanently unlinkable and always flagged by Wealthfolio's Data
+ * Consistency checker.
  */
 export function buildOpeningBalanceActivity(
   input: OpeningBalanceInput,
   mapping: AccountMapping,
   currency: string,
+  destinationAccountType: AccountType,
 ): ActivityImport | null {
   const remainder = subtractDecimal(input.sfBalance, input.wfBalance);
   if (/^0(\.0*)?$/.test(remainder)) return null;
@@ -78,10 +87,11 @@ export function buildOpeningBalanceActivity(
   const magnitude = remainder.replace(/^-/, '');
   const dateEpoch =
     input.earliestPosted !== null ? input.earliestPosted - SECONDS_PER_DAY : input.balanceDate;
+  const inflowType = destinationAccountType === 'CREDIT_CARD' ? 'CREDIT' : 'DEPOSIT';
 
   return {
     accountId: mapping.wfAccountId,
-    activityType: isOutflow ? 'TRANSFER_OUT' : 'TRANSFER_IN',
+    activityType: isOutflow ? 'WITHDRAWAL' : inflowType,
     date: isoDate(dateEpoch),
     amount: magnitude,
     currency,

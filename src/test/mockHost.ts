@@ -42,10 +42,10 @@ export function createMockHost(): MockHost {
       import: vi.fn(),
       search: vi.fn(async () => ({ data: [], meta: { totalRowCount: 0 } })),
       update: vi.fn(async (activity: unknown) => activity),
-      saveMany: vi.fn(async (req: { updates?: unknown[] }) => ({
-        created: [],
+      saveMany: vi.fn(async (req: { creates?: unknown[]; updates?: unknown[]; deleteIds?: string[] }) => ({
+        created: (req.creates ?? []).map((c, i) => ({ id: `MOCK-CREATED-${i}`, ...(c as object) })),
         updated: req.updates ?? [],
-        deleted: [],
+        deleted: req.deleteIds ?? [],
         createdMappings: [],
         errors: [],
       })),

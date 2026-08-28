@@ -15,7 +15,7 @@ import {
   formatAmount,
 } from '@wealthfolio/ui';
 import { Fragment, useEffect, useState } from 'react';
-import { describeWithdrawals, findBackfillCandidates, resolveAmbiguous, runReconciliation } from '../lib/sync/reconciliation';
+import { describeWithdrawals, findBackfillCandidates, relinkUnlinkedTransferPairs, resolveAmbiguous, runReconciliation } from '../lib/sync/reconciliation';
 import { readStaging, writeStaging, type StagedCandidate } from '../lib/storage/staging';
 import { compactCellClassName, compactHeadClassName } from './tableStyle';
 
@@ -59,6 +59,7 @@ export function StagedTransactionsList({
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -109,6 +110,7 @@ export function StagedTransactionsList({
 
   async function scanForOlderPayments() {
     setError(null);
+    setScanResult(null);
     setScanning(true);
     try {
       const existing = await readStaging(api);
@@ -121,6 +123,11 @@ export function StagedTransactionsList({
       );
       setCandidates(remaining);
       await writeStaging(api, remaining);
+
+      const { relinked, unmatched, ambiguous, failed } = await relinkUnlinkedTransferPairs(api, [...cardAccountIds, ...cashAccountIds], cashAccountIds);
+      setScanResult(
+        `Found ${found.length} new candidate${found.length === 1 ? '' : 's'}. Relinked ${relinked} transfer pair${relinked === 1 ? '' : 's'}: ${unmatched} had no match, ${ambiguous} had multiple candidates, ${failed} failed.`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -129,9 +136,12 @@ export function StagedTransactionsList({
   }
 
   const scanButton = (
-    <Button size="sm" variant="outline" onClick={scanForOlderPayments} disabled={scanning}>
-      {scanning ? 'Scanning…' : 'Scan for older payments and transfers'}
-    </Button>
+    <div className="flex flex-col items-start gap-1">
+      <Button size="sm" className="h-auto max-w-md whitespace-normal text-left" onClick={scanForOlderPayments} disabled={scanning}>
+        {scanning ? 'Scanning…' : 'Scan for older credit card payments, bank transfers and unlinked transfer pairs'}
+      </Button>
+      {scanResult && <p className="text-muted-foreground text-sm">{scanResult}</p>}
+    </div>
   );
 
   if (candidates === null) {

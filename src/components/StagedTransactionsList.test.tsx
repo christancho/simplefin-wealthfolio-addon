@@ -193,10 +193,11 @@ describe('StagedTransactionsList', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm/i }));
 
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'CARD-ACT-2', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'CASH-A', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'TXN-2' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'TXN-2' }),
       ],
+      deleteIds: ['CARD-ACT-2', 'CASH-A'],
     });
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
   });
@@ -226,7 +227,7 @@ describe('StagedTransactionsList', () => {
     render(<StagedTransactionsList api={host.api} {...defaultProps} />);
     await screen.findByText(/no staged transactions/i);
 
-    await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
+    await userEvent.click(screen.getByRole('button', { name: /scan for older/i }));
 
     expect(await screen.findByText('$75.00')).toBeInTheDocument();
     expect(screen.getByText('pending')).toBeInTheDocument();
@@ -271,14 +272,68 @@ describe('StagedTransactionsList', () => {
     render(<StagedTransactionsList api={host.api} {...defaultProps} />);
     await screen.findByText(/no staged transactions/i);
 
-    await userEvent.click(screen.getByRole('button', { name: /scan for older payments/i }));
+    await userEvent.click(screen.getByRole('button', { name: /scan for older/i }));
 
     expect(await screen.findByText(/no staged transactions/i)).toBeInTheDocument();
     expect(host.api.activities.saveMany).toHaveBeenCalledWith({
-      updates: [
-        expect.objectContaining({ id: 'OLD-CARD-ACT', activityType: 'TRANSFER_IN' }),
-        expect.objectContaining({ id: 'OLD-CASH-ACT', activityType: 'TRANSFER_OUT' }),
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'OLD-CARD-ACT' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'OLD-CARD-ACT' }),
       ],
+      deleteIds: ['OLD-CARD-ACT', 'OLD-CASH-ACT'],
+    });
+  });
+
+  it('relinks unlinked transfer pairs found during a scan and reports the count', async () => {
+    const host = createMockHost();
+    host.api.activities.search = vi.fn(async (_p: number, _s: number, filters: { activityTypes: string }) => {
+      if (filters.activityTypes === 'TRANSFER_IN') {
+        return {
+          data: [
+            {
+              id: 'OLD-TIN-1',
+              accountId: 'WF-CARD',
+              activityType: 'TRANSFER_IN',
+              date: '2025-08-06T00:00:00+00:00',
+              amount: '50',
+              currency: 'USD',
+              comment: 'Old payment',
+            },
+          ],
+          meta: { totalRowCount: 1 },
+        };
+      }
+      if (filters.activityTypes === 'TRANSFER_OUT') {
+        return {
+          data: [
+            {
+              id: 'OLD-TOUT-1',
+              accountId: 'WF-CASH',
+              activityType: 'TRANSFER_OUT',
+              date: '2025-08-05T00:00:00+00:00',
+              amount: '50',
+              currency: 'USD',
+              comment: 'Old withdrawal',
+            },
+          ],
+          meta: { totalRowCount: 1 },
+        };
+      }
+      return { data: [], meta: { totalRowCount: 0 } };
+    }) as never;
+
+    render(<StagedTransactionsList api={host.api} {...defaultProps} />);
+    await screen.findByText(/no staged transactions/i);
+
+    await userEvent.click(screen.getByRole('button', { name: /scan for older/i }));
+
+    expect(await screen.findByText(/relinked 1 transfer pair/i)).toBeInTheDocument();
+    expect(host.api.activities.saveMany).toHaveBeenCalledWith({
+      creates: [
+        expect.objectContaining({ accountId: 'WF-CARD', activityType: 'TRANSFER_IN', sourceGroupId: 'OLD-TIN-1' }),
+        expect.objectContaining({ accountId: 'WF-CASH', activityType: 'TRANSFER_OUT', sourceGroupId: 'OLD-TIN-1' }),
+      ],
+      deleteIds: ['OLD-TIN-1', 'OLD-TOUT-1'],
     });
   });
 });
