@@ -64,3 +64,6 @@ credentials.json
 
 # Local agent session transcripts — not project source, not reproducible.
 .claude/chat-exports/
+
+# Internal planning docs — not part of the public project.
+docs/
