@@ -67,24 +67,14 @@ describe('buildOpeningBalanceActivity', () => {
     expect(activity?.amount).toBe('30.00');
   });
 
-  it('builds a CREDIT instead of a DEPOSIT on a credit-card account', () => {
+  it('returns null on a credit-card account even when the balances disagree', () => {
     const activity = buildOpeningBalanceActivity(
       { sfBalance: '100.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
       mapping,
       'USD',
       'CREDIT_CARD',
     );
-    expect(activity?.activityType).toBe('CREDIT');
-  });
-
-  it('still builds a WITHDRAWAL (not CREDIT) on a credit-card account when Wealthfolio holds more', () => {
-    const activity = buildOpeningBalanceActivity(
-      { sfBalance: '50.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
-      mapping,
-      'USD',
-      'CREDIT_CARD',
-    );
-    expect(activity?.activityType).toBe('WITHDRAWAL');
+    expect(activity).toBeNull();
   });
 
   it('dates the entry one day before the earliest posted transaction', () => {

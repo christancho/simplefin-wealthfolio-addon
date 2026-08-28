@@ -51,7 +51,8 @@ async function fetchFullHistory(
 /**
  * Plugs the gap between SimpleFIN's current balance and whatever the
  * full-history pull actually landed in Wealthfolio, as one synthetic
- * DEPOSIT/WITHDRAWAL (or CREDIT on a credit-card account) activity.
+ * DEPOSIT/WITHDRAWAL activity. No-op on a credit-card account — see
+ * `buildOpeningBalanceActivity`.
  *
  * The post-import Wealthfolio balance is computed here, not read back from
  * the host: `portfolio.recalculate()` resolving is not a reliable signal

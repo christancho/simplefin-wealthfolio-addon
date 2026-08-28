@@ -630,7 +630,7 @@ describe('runSync opening-balance backfill', () => {
     expect(run.accounts[0].imported).toBe(2);
   });
 
-  it('pushes a CREDIT instead of a DEPOSIT opening-balance entry on a credit-card account', async () => {
+  it('pushes no opening-balance entry on a credit-card account, only the real transaction', async () => {
     const { host, pushed } = backfillHost('100.00', [
       { id: 'T1', posted: 1754438400, amount: '-10.00', description: 'X' },
     ]);
@@ -638,8 +638,8 @@ describe('runSync opening-balance backfill', () => {
 
     await runSync(host.api, backfillConfig);
 
-    expect(pushed).toHaveLength(2);
-    expect(pushed[1].activityType).toBe('CREDIT');
+    expect(pushed).toHaveLength(1);
+    expect(pushed[0].activityType).toBe('WITHDRAWAL');
   });
 
   it('folds a pre-existing Wealthfolio balance into the plug instead of ignoring it', async () => {
