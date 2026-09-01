@@ -710,6 +710,73 @@ describe('runSync opening-balance backfill', () => {
     expect(host.requests).toHaveLength(1);
   });
 
+  it('reports a balance the host never returned as unchecked, not as agreeing', async () => {
+    // Wealthfolio excludes credit cards from getLatestValuations, so a card is
+    // always absent — reporting that as "no mismatch" marks it verified when
+    // nothing was compared.
+    const host = okHost();
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1, recentIds: [] });
+    await writeWatermark(host.api, 'WF-2', { lastPosted: 1, recentIds: [] });
+    host.api.portfolio.getLatestValuations = vi.fn(async () => []) as never;
+
+    const run = await runSync(host.api, config);
+
+    expect(run.accounts[0].balanceMismatch).toBeNull();
+    expect(run.accounts[0].balanceUnchecked).toMatch(/no balance/i);
+  });
+
+  it('reports a balance that was compared and agreed as checked', async () => {
+    const host = okHost();
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1, recentIds: [] });
+    await writeWatermark(host.api, 'WF-2', { lastPosted: 1, recentIds: [] });
+    host.api.portfolio.getLatestValuations = vi.fn(async () => [
+      { accountId: 'WF-1', cashBalance: 100 },
+      { accountId: 'WF-2', cashBalance: 200 },
+    ]) as never;
+
+    const run = await runSync(host.api, config);
+
+    expect(run.accounts[0].balanceMismatch).toBeNull();
+    expect(run.accounts[0].balanceUnchecked).toBeNull();
+  });
+
+  it('surfaces unresolved holding symbols as a warning without failing the account', async () => {
+    // Built from createMockHost, not okHost: `respond` appends routes and the
+    // first match wins, so an okHost route can't be overridden.
+    const host = createMockHost();
+    host.api.accounts.getAll = vi.fn(async () => []);
+    host.respond(/\/accounts/, {
+      body: JSON.stringify({
+        errors: [],
+        accounts: [
+          {
+            ...bridgePayload.accounts[0],
+            holdings: [{ symbol: 'BTC', shares: '1', currency: 'USD', purchase_price: '100' }],
+          },
+        ],
+      }),
+    });
+    host.api.snapshots.checkImport = vi.fn(async () => ({
+      existingDates: [],
+      symbols: [{ symbol: 'BTC', found: false }],
+      validationErrors: [],
+    })) as never;
+    host.api.snapshots.importSnapshots = vi.fn(async () => ({
+      snapshotsImported: 1,
+      snapshotsFailed: 0,
+      errors: [],
+    })) as never;
+
+    const run = await runSync(host.api, {
+      ...config,
+      mappings: [{ ...config.mappings[0], mode: 'HOLDINGS' }],
+    });
+
+    expect(run.accounts[0].error).toBeNull();
+    expect(run.accounts[0].imported).toBe(1);
+    expect(run.accounts[0].warning).toMatch(/BTC/);
+  });
+
   it('does not run the backfill path for a HOLDINGS mapping', async () => {
     const { host } = backfillHost('100.00', []);
 

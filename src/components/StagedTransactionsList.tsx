@@ -45,6 +45,22 @@ export interface StagedTransactionsListProps {
   wfAccounts: Account[];
 }
 
+/**
+ * A host activity date is an *instant*, so which calendar day it falls on
+ * depends on the zone it's read in. Wealthfolio's own UI localizes it; this
+ * picker formatted it in UTC, so it could show a different day than the
+ * transaction list the user is comparing it against.
+ *
+ * Kept as `YYYY-MM-DD` rather than `toLocaleDateString()` so the column reads
+ * the same as the staged `postedDate` beside it — that one is already a bare
+ * date with no instant behind it, and so needs no conversion.
+ */
+function localDate(dateLike: Date | string): string {
+  const d = new Date(dateLike);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function StagedTransactionsList({
   api,
   cashAccountIds,
@@ -248,7 +264,7 @@ export function StagedTransactionsList({
                   </TableCell>
                   <TableCell className={compactCellClassName}>{choice.accountName}</TableCell>
                   <TableCell className={compactCellClassName}>{choice.comment}</TableCell>
-                  <TableCell className={compactCellClassName}>{new Date(choice.date).toISOString().slice(0, 10)}</TableCell>
+                  <TableCell className={compactCellClassName}>{localDate(choice.date)}</TableCell>
                   <TableCell className={compactCellClassName}>{formatAmount(choice.amount, choice.currency)}</TableCell>
                 </TableRow>
               ))}

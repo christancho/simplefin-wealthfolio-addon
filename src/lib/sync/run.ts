@@ -5,8 +5,8 @@ import { cashAccountIdsFrom, type AccountMapping, type SyncConfig } from '../sto
 import { appendRun, type AccountRunResult, type SyncRun } from '../storage/history';
 import { readStaging, writeStaging, type StagedCandidate } from '../storage/staging';
 import { readWatermark, writeWatermark } from '../storage/watermark';
-import { syncCashAccount } from './activities';
-import { compareBalances } from './balance';
+import { activityEpoch, syncCashAccount } from './activities';
+import { compareBalances, type BalanceCheck } from './balance';
 import { buildOpeningBalanceActivity, sumDecimal } from './openingBalance';
 import { runReconciliation } from './reconciliation';
 import { syncHoldingsAccount } from './snapshots';
@@ -74,8 +74,13 @@ async function pushOpeningBalance(
 ): Promise<number> {
   const wfBalance = sumDecimal([preSyncBalance ?? '0', ...importedTxns.map((t) => t.amount)]);
 
+  // Anchored on the same instant that dates the activities themselves
+  // (`activityEpoch`), not on `posted` — otherwise a transaction dated by its
+  // earlier `transacted_at` would sit before the opening entry meant to
+  // precede it.
   const posted = sfAccount.transactions.filter((t) => !t.pending);
-  const earliestPosted = posted.length > 0 ? Math.min(...posted.map((t) => t.posted)) : null;
+  const earliestPosted =
+    posted.length > 0 ? Math.min(...posted.map((t) => activityEpoch(t))) : null;
 
   const plug = buildOpeningBalanceActivity(
     {
@@ -118,6 +123,8 @@ async function syncOne(
     duplicates: null,
     error: null,
     balanceMismatch: null,
+    balanceUnchecked: null,
+    warning: null,
   };
 
   if (!sfAccount) {
@@ -134,17 +141,28 @@ async function syncOne(
 
   try {
     if (mapping.mode === 'HOLDINGS') {
-      const { imported, skipped } = await syncHoldingsAccount(api, mapping, sfAccount);
+      const { imported, skipped, unresolvedSymbols } = await syncHoldingsAccount(
+        api,
+        mapping,
+        sfAccount,
+      );
+      const balance = compareBalances(
+        sfAccount.balance,
+        wfBalances.get(mapping.wfAccountId) ?? null,
+      );
       return {
         accountResult: {
           ...base,
           imported,
           skipped,
           duplicates: 0,
-          balanceMismatch: compareBalances(
-            sfAccount.balance,
-            wfBalances.get(mapping.wfAccountId) ?? null,
-          ),
+          balanceMismatch: balance.mismatch,
+          balanceUnchecked: balance.unchecked,
+          warning:
+            unresolvedSymbols.length > 0
+              ? `Wealthfolio could not resolve ${unresolvedSymbols.join(', ')} — ` +
+                'those holdings may be priced against the wrong security'
+              : null,
         },
         candidates: [],
       };
@@ -188,18 +206,26 @@ async function syncOne(
         )
       : 0;
 
+    // A first-sync account's balance was just brought into agreement by the
+    // plug above (or never disagreed); comparing against the pre-run snapshot
+    // in wfBalances would flag a stale, misleading mismatch.
+    const balance: BalanceCheck = isFirstSync
+      ? {
+          mismatch: null,
+          unchecked:
+            'first sync, where the opening-balance entry has just brought the two ' +
+            'into agreement',
+        }
+      : compareBalances(sfAccount.balance, wfBalances.get(mapping.wfAccountId) ?? null);
+
     return {
       accountResult: {
         ...base,
         imported: result.imported + plugImported,
         skipped: result.skipped,
         duplicates: result.duplicates,
-        // A first-sync account's balance was just brought into agreement by the
-        // plug above (or never disagreed); comparing against the pre-run
-        // snapshot in wfBalances would flag a stale, misleading mismatch.
-        balanceMismatch: isFirstSync
-          ? null
-          : compareBalances(sfAccount.balance, wfBalances.get(mapping.wfAccountId) ?? null),
+        balanceMismatch: balance.mismatch,
+        balanceUnchecked: balance.unchecked,
       },
       candidates,
     };

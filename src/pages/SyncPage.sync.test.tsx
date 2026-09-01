@@ -65,7 +65,7 @@ describe('SyncPage sync trigger', () => {
     const cells = within(row as HTMLElement)
       .getAllByRole('cell')
       .map((c) => c.textContent);
-    expect(cells).toEqual(['Checking', '1', '0', '0', '1', '—']);
+    expect(cells).toEqual(['Checking', '1', '0', '0', '1', expect.stringContaining('Not checked')]);
   });
 
   it('renders a per-account error as failed while other accounts show success', async () => {
@@ -115,7 +115,7 @@ describe('SyncPage sync trigger', () => {
     const okCells = within(okRow as HTMLElement)
       .getAllByRole('cell')
       .map((c) => c.textContent);
-    expect(okCells).toEqual(['Checking', '0', '0', '0', '0', '—']);
+    expect(okCells).toEqual(['Checking', '0', '0', '0', '0', expect.stringContaining('Not checked')]);
   });
 
   it('renders a bridge error banner naming the institution with a link to the credential-free dashboard host', async () => {
