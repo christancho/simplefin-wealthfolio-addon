@@ -17,6 +17,20 @@ function totalFor(result: AccountRunResult): number | null {
   return imported + skipped + duplicates;
 }
 
+/**
+ * A skipped balance check must never read like a passing one. `—` is reserved
+ * for runs recorded before `balanceUnchecked` existed, where `undefined` means
+ * the outcome genuinely isn't known.
+ */
+function balanceLabel(result: AccountRunResult): string {
+  if (result.balanceMismatch) {
+    return `SimpleFIN ${result.balanceMismatch.simplefin} vs Wealthfolio ${result.balanceMismatch.wealthfolio}`;
+  }
+  if (result.balanceUnchecked === undefined) return '—';
+  if (result.balanceUnchecked !== null) return `Not checked — ${result.balanceUnchecked}`;
+  return 'Matches';
+}
+
 export function SyncSummary({ run }: SyncSummaryProps) {
   return (
     <Table aria-label="Sync results">
@@ -33,7 +47,14 @@ export function SyncSummary({ run }: SyncSummaryProps) {
       <TableBody>
         {run.accounts.map((result) => (
           <TableRow key={result.sfAccountId}>
-            <TableCell className={compactCellClassName}>{result.sfAccountName}</TableCell>
+            <TableCell className={compactCellClassName}>
+              {result.sfAccountName}
+              {/* A caveat on a result that did sync — never suppresses the counts,
+                  unlike `error`, which means the account produced nothing. */}
+              {result.warning ? (
+                <div className="text-muted-foreground text-xs">Warning: {result.warning}</div>
+              ) : null}
+            </TableCell>
             {result.error ? (
               <TableCell className={compactCellClassName} colSpan={5}>
                 Failed: {result.error}
@@ -52,11 +73,7 @@ export function SyncSummary({ run }: SyncSummaryProps) {
                 <TableCell className={cn(compactCellClassName, 'text-right tabular-nums')}>
                   {cell(totalFor(result))}
                 </TableCell>
-                <TableCell className={compactCellClassName}>
-                  {result.balanceMismatch
-                    ? `SimpleFIN ${result.balanceMismatch.simplefin} vs Wealthfolio ${result.balanceMismatch.wealthfolio}`
-                    : '—'}
-                </TableCell>
+                <TableCell className={compactCellClassName}>{balanceLabel(result)}</TableCell>
               </>
             )}
           </TableRow>

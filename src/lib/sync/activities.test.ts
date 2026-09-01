@@ -16,6 +16,7 @@ const mapping: AccountMapping = {
 const txn = (over: Partial<Record<string, unknown>> = {}) => ({
   id: 'TXN-1',
   posted: 1754438400,
+  transactedAt: null,
   amount: '-42.10',
   description: 'COFFEE',
   payee: 'Blue Bottle',
@@ -63,9 +64,41 @@ describe('toActivityImport', () => {
     expect(toActivityImport(txn({ payee: null }) as never, mapping, 'USD', 'CASH').comment).toBe('COFFEE');
   });
 
-  it('converts the epoch posted date to an ISO date', () => {
+  it('sends the posted epoch as a full RFC3339 instant, never a bare date', () => {
+    // Regression test for the one-day display shift. Wealthfolio's
+    // deserializer expands a bare `YYYY-MM-DD` to *midnight UTC*
+    // (activities_model.rs, timestamp_format::deserialize) and its frontend
+    // renders that in the viewer's zone, so every row showed 8:00 PM the
+    // previous day in America/Toronto. Sending the instant lets the host
+    // localize the real moment instead.
     const activity = toActivityImport(txn() as never, mapping, 'USD', 'CASH');
-    expect(activity.date).toBe('2025-08-06');
+    expect(activity.date).toBe('2025-08-06T00:00:00.000Z');
+  });
+
+  it('preserves the Bridge\'s noon-UTC encoding rather than truncating it', () => {
+    // The Bridge encodes date-only values at noon UTC — the timezone-safe
+    // midpoint that keeps the calendar date intact in either direction
+    // (confirmed against the raw feed: every transaction, every institution,
+    // exactly 12:00:00 UTC). Truncating it to a date is what lost the day.
+    const activity = toActivityImport(txn({ posted: 1782993600 }) as never, mapping, 'USD', 'CASH');
+    expect(activity.date).toBe('2026-07-02T12:00:00.000Z');
+  });
+
+  it('dates the activity by transacted_at when the Bridge reports it', () => {
+    // `posted` is settlement, which trails the purchase by 1-3 days; the user
+    // reconciles against the purchase date on their statement.
+    const activity = toActivityImport(
+      txn({ posted: 1754438400, transactedAt: 1754179200 }) as never,
+      mapping,
+      'USD',
+      'CASH',
+    );
+    expect(activity.date).toBe('2025-08-03T00:00:00.000Z');
+  });
+
+  it('falls back to posted when the Bridge omits transacted_at', () => {
+    const activity = toActivityImport(txn({ transactedAt: null }) as never, mapping, 'USD', 'CASH');
+    expect(activity.date).toBe('2025-08-06T00:00:00.000Z');
   });
 
   it('sets symbol to an empty string, since the host rejects the whole batch if it is absent', () => {
@@ -248,6 +281,63 @@ describe('syncCashAccount', () => {
     const { watermark } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []);
 
     expect(watermark.lastPosted).toBe(1754438400);
+    expect(watermark.recentIds).toContain('TXN-1');
+  });
+
+  it('fails the account when the host lands fewer rows than were submitted', async () => {
+    // The host reports counts, not per-row status, so a short batch can't be
+    // narrowed to which rows failed — advancing the watermark over it would
+    // skip the missing ones forever.
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a) => a);
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R1',
+      summary: { total: 2, imported: 1, skipped: 1, duplicates: 0, assetsCreated: 0, success: true },
+    }));
+
+    await expect(
+      syncCashAccount(
+        host.api,
+        mapping,
+        account([txn(), txn({ id: 'TXN-2', posted: 1754524800 })]) as never,
+        emptyWatermark(),
+        'CASH',
+        [],
+        [],
+      ),
+    ).rejects.toThrow(/landed 1 of 2 row\(s\)/);
+  });
+
+  it('fails the account when the host reports success: false, even with a full count', async () => {
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a) => a);
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R1',
+      summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: false },
+    }));
+
+    await expect(
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []),
+    ).rejects.toThrow(/success=false/);
+  });
+
+  it('counts a host-side duplicate as landed, since the row is present on the other side', async () => {
+    // The real all-duplicates shape, captured from a live host: `skipped` and
+    // `duplicates` count the *same* rows, so a sum including `skipped` would
+    // read 2 for a single submitted row and never match.
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a) => a);
+    host.api.activities.import = vi.fn(async () => ({
+      activities: [],
+      importRunId: 'R1',
+      summary: { total: 1, imported: 0, skipped: 1, duplicates: 1, assetsCreated: 0, success: true },
+    }));
+
+    const { watermark } = await syncCashAccount(
+      host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], [],
+    );
     expect(watermark.recentIds).toContain('TXN-1');
   });
 

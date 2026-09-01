@@ -1,5 +1,6 @@
 import type { AccountType, ActivityImport } from '@wealthfolio/addon-sdk';
 import type { AccountMapping } from '../storage/config';
+import { isoInstant } from './activities';
 
 const SECONDS_PER_DAY = 86_400;
 
@@ -57,21 +58,21 @@ export interface OpeningBalanceInput {
   balanceDate: number;
 }
 
-function isoDate(epochSeconds: number): string {
-  return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
-}
-
 /**
  * One-time synthetic activity that plugs the gap between SimpleFIN's current
  * balance and whatever landed in Wealthfolio from the full-history backfill —
  * returns null when there is no gap.
  *
- * Imported as `DEPOSIT`/`WITHDRAWAL` (or `CREDIT` in place of `DEPOSIT` on a
- * credit-card account, mirroring `toActivityImport`), never `TRANSFER_IN`/
- * `TRANSFER_OUT` — this plug has no counterparty leg by construction (it's
- * money the account already had before this addon started tracking it, not a
- * transfer between two tracked accounts), so typing it as a transfer would
- * leave it permanently unlinkable and always flagged by Wealthfolio's Data
+ * Never built for a credit-card account: a card's balance self-zeros every
+ * statement cycle, so the plug would be a vendor-less charge with no lasting
+ * meaning, sitting in the first cycle's history and skewing that month's
+ * spend view. Real transactions are the only source of truth there.
+ *
+ * Imported as `DEPOSIT`/`WITHDRAWAL`, never `TRANSFER_IN`/`TRANSFER_OUT` —
+ * this plug has no counterparty leg by construction (it's money the account
+ * already had before this addon started tracking it, not a transfer between
+ * two tracked accounts), so typing it as a transfer would leave it
+ * permanently unlinkable and always flagged by Wealthfolio's Data
  * Consistency checker.
  */
 export function buildOpeningBalanceActivity(
@@ -80,6 +81,8 @@ export function buildOpeningBalanceActivity(
   currency: string,
   destinationAccountType: AccountType,
 ): ActivityImport | null {
+  if (destinationAccountType === 'CREDIT_CARD') return null;
+
   const remainder = subtractDecimal(input.sfBalance, input.wfBalance);
   if (/^0(\.0*)?$/.test(remainder)) return null;
 
@@ -87,12 +90,11 @@ export function buildOpeningBalanceActivity(
   const magnitude = remainder.replace(/^-/, '');
   const dateEpoch =
     input.earliestPosted !== null ? input.earliestPosted - SECONDS_PER_DAY : input.balanceDate;
-  const inflowType = destinationAccountType === 'CREDIT_CARD' ? 'CREDIT' : 'DEPOSIT';
 
   return {
     accountId: mapping.wfAccountId,
-    activityType: isOutflow ? 'WITHDRAWAL' : inflowType,
-    date: isoDate(dateEpoch),
+    activityType: isOutflow ? 'WITHDRAWAL' : 'DEPOSIT',
+    date: isoInstant(dateEpoch),
     amount: magnitude,
     currency,
     symbol: '',

@@ -1,6 +1,6 @@
 import type { ActivityCreate, ActivityDetails, HostAPI } from '@wealthfolio/addon-sdk';
 import type { InflowActivityType, StagedCandidate } from '../storage/staging';
-import { isPaymentCandidate } from './activities';
+import { isPaymentCandidate, toIsoDateOnly } from './activities';
 import { normalise } from './balance';
 
 /**
@@ -21,15 +21,6 @@ const SECONDS_PER_DAY = 86_400;
 
 /** activities.search()'s page size — large enough that most accounts resolve in one page. */
 const SEARCH_PAGE_SIZE = 200;
-
-/**
- * `ActivityDetails.date` is typed as `Date` but the host serialises it as an
- * ISO datetime string over JSON (confirmed against a live host) — this
- * normalises either shape down to a comparable YYYY-MM-DD.
- */
-function toIsoDateOnly(dateLike: unknown): string {
-  return new Date(dateLike as string | Date).toISOString().slice(0, 10);
-}
 
 /**
  * `activities.search()` paginates from page 0 (confirmed against a live
