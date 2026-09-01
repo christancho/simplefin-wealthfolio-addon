@@ -324,12 +324,15 @@ describe('syncCashAccount', () => {
   });
 
   it('counts a host-side duplicate as landed, since the row is present on the other side', async () => {
+    // The real all-duplicates shape, captured from a live host: `skipped` and
+    // `duplicates` count the *same* rows, so a sum including `skipped` would
+    // read 2 for a single submitted row and never match.
     const host = createMockHost();
     host.api.activities.checkImport = vi.fn(async (a) => a);
     host.api.activities.import = vi.fn(async () => ({
       activities: [],
       importRunId: 'R1',
-      summary: { total: 1, imported: 0, skipped: 0, duplicates: 1, assetsCreated: 0, success: true },
+      summary: { total: 1, imported: 0, skipped: 1, duplicates: 1, assetsCreated: 0, success: true },
     }));
 
     const { watermark } = await syncCashAccount(

@@ -250,6 +250,18 @@ export async function syncCashAccount(
   //
   // Host-side duplicates count as landed for the same reason they do above:
   // the row is genuinely present on the other side.
+  //
+  // Verified against a live host (2026-09-01), which returns exactly two
+  // success shapes:
+  //   fresh rows      -> { total: 2, imported: 2, skipped: 0, duplicates: 0 }
+  //   re-import same  -> { total: 2, imported: 0, skipped: 2, duplicates: 2 }
+  // `skipped` and `duplicates` count the *same* rows in that second shape, so
+  // `imported + skipped + duplicates` would double-count them and never match
+  // the submitted length. Do not add `skipped` to this sum.
+  //
+  // A genuinely bad row (unknown accountId) comes back as HTTP 400, not a
+  // short summary, so it is the catch above that holds the watermark. This
+  // check is the net for a partial acceptance the host may never produce.
   const landed = outcome.summary.imported + outcome.summary.duplicates;
   if (!outcome.summary.success || landed < importable.length) {
     throw new Error(
