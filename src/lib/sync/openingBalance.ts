@@ -1,5 +1,6 @@
 import type { AccountType, ActivityImport } from '@wealthfolio/addon-sdk';
 import type { AccountMapping } from '../storage/config';
+import { isoInstant } from './activities';
 
 const SECONDS_PER_DAY = 86_400;
 
@@ -57,10 +58,6 @@ export interface OpeningBalanceInput {
   balanceDate: number;
 }
 
-function isoDate(epochSeconds: number): string {
-  return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
-}
-
 /**
  * One-time synthetic activity that plugs the gap between SimpleFIN's current
  * balance and whatever landed in Wealthfolio from the full-history backfill —
@@ -97,7 +94,7 @@ export function buildOpeningBalanceActivity(
   return {
     accountId: mapping.wfAccountId,
     activityType: isOutflow ? 'WITHDRAWAL' : 'DEPOSIT',
-    date: isoDate(dateEpoch),
+    date: isoInstant(dateEpoch),
     amount: magnitude,
     currency,
     symbol: '',

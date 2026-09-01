@@ -4,9 +4,60 @@ import type { AccountMapping } from '../storage/config';
 import type { InflowActivityType, StagedCandidate } from '../storage/staging';
 import { advanceWatermark, shouldPush, type Watermark } from '../storage/watermark';
 
-/** Epoch seconds -> YYYY-MM-DD in UTC, the form Wealthfolio's importer expects. */
+/** Epoch seconds -> YYYY-MM-DD in UTC. Addon-internal only — never sent to the host. */
 export function isoDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Epoch seconds -> full RFC3339 instant, the form every activity `date` must
+ * take on the wire.
+ *
+ * Never send a bare `YYYY-MM-DD`: Wealthfolio's deserializer expands a
+ * date-only value to *midnight UTC* (`activities_model.rs`,
+ * `timestamp_format::deserialize`), which its frontend then renders in the
+ * viewer's local zone — showing 8:00 PM the previous day in America/Toronto.
+ * Passing the instant through lets the host localize the real moment. The
+ * Bridge encodes its own date-only values at noon UTC, the timezone-safe
+ * midpoint, so the calendar date survives localization in either direction.
+ */
+export function isoInstant(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toISOString();
+}
+
+/**
+ * Normalises a host-returned activity date (typed `Date`, serialised as an
+ * ISO string over JSON — confirmed against a live host) down to a comparable
+ * `YYYY-MM-DD`.
+ *
+ * Deliberately UTC, and every date-bucket comparison in this addon must stay
+ * UTC on *both* sides so they agree: a candidate's `postedDate` from
+ * `isoDate()` and a host row's date through this function are the two halves
+ * of the same comparison. The Bridge's noon-UTC encoding means the UTC bucket
+ * is the intended calendar date; an institution reporting real intraday
+ * timestamps could bucket a late-evening local purchase into the next UTC day,
+ * which would shift the reconciliation match window by a day for that row.
+ * That is latent — no such institution has been observed — and re-bucketing to
+ * local time would strand every `postedDate` already persisted in staging, so
+ * the UTC invariant stands until a real timestamp feed forces the migration.
+ */
+export function toIsoDateOnly(dateLike: unknown): string {
+  return new Date(dateLike as string | Date).toISOString().slice(0, 10);
+}
+
+/**
+ * Which instant dates an activity: `transacted_at` when the Bridge reports it,
+ * `posted` otherwise.
+ *
+ * `posted` is when the bank settled the transaction, often 1-3 days after the
+ * purchase; `transacted_at` is when it actually happened, which is what a user
+ * comparing against their statement expects to see. The watermark deliberately
+ * keeps using `posted` (see `../storage/watermark`) — that is the Bridge's own
+ * ordering key for what it has released, and is unrelated to how a row is
+ * dated.
+ */
+export function activityEpoch(txn: Pick<SfTransaction, 'posted' | 'transactedAt'>): number {
+  return txn.transactedAt ?? txn.posted;
 }
 
 /**
@@ -31,7 +82,7 @@ export function toActivityImport(
   return {
     accountId: mapping.wfAccountId,
     activityType: isOutflow ? 'WITHDRAWAL' : inflowType,
-    date: isoDate(txn.posted),
+    date: isoInstant(activityEpoch(txn)),
     amount: magnitude,
     currency,
     // Cash activities have no ticker. The addon-sdk types this as optional,
@@ -76,7 +127,7 @@ export function detectCandidate(
     inflowActivityType,
     amount: txn.amount.trim().replace(/^-/, ''),
     currency,
-    postedDate: isoDate(txn.posted),
+    postedDate: isoDate(activityEpoch(txn)),
     comment: text,
     status: 'pending',
     candidateWithdrawalIds: [],
@@ -186,6 +237,27 @@ export async function syncCashAccount(
         `${mapping.sfAccountName}: ${JSON.stringify(importable)}`,
     );
     throw error;
+  }
+
+  // The host reports what landed as counts, not per-row status, so a short
+  // batch can't be narrowed to *which* rows failed. Advancing the watermark
+  // over a batch we can't account for would skip the missing rows forever, and
+  // counting them in `importedTxns` would shrink the opening-balance plug by
+  // money that never landed. Failing the account instead leaves the watermark
+  // untouched (the caller writes it only on a clean return), so the next run
+  // retries the whole batch — the rows that did land come back from
+  // `checkImport` as `duplicateOfId` and advance the watermark then.
+  //
+  // Host-side duplicates count as landed for the same reason they do above:
+  // the row is genuinely present on the other side.
+  const landed = outcome.summary.imported + outcome.summary.duplicates;
+  if (!outcome.summary.success || landed < importable.length) {
+    throw new Error(
+      `activities.import landed ${landed} of ${importable.length} row(s) for ` +
+        `${mapping.sfAccountName} (success=${outcome.summary.success}, ` +
+        `imported=${outcome.summary.imported}, duplicates=${outcome.summary.duplicates}, ` +
+        `skipped=${outcome.summary.skipped}) — watermark held back for a retry next run`,
+    );
   }
 
   // Only an inflow (money landing on the account) is ever scanned for

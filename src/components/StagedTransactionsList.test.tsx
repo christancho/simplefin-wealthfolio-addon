@@ -185,8 +185,12 @@ describe('StagedTransactionsList', () => {
     expect(within(table).getByRole('columnheader', { name: /amount/i })).toBeInTheDocument();
     expect(within(table).getByText('Joint Checking')).toBeInTheDocument();
     expect(within(table).getByText('Personal Checking')).toBeInTheDocument();
-    expect(within(table).getByText('2026-07-31')).toBeInTheDocument();
+    // Both fixture instants are midnight UTC, which in America/Toronto is the
+    // evening of the previous day — the day Wealthfolio's own UI shows for
+    // those rows. Formatting in UTC here would print Jul 31 / Jul 30 and
+    // disagree with it.
     expect(within(table).getByText('2026-07-30')).toBeInTheDocument();
+    expect(within(table).getByText('2026-07-29')).toBeInTheDocument();
     expect(within(table).getAllByText('$80.00')).toHaveLength(2);
 
     await userEvent.click(within(dialog).getByText(/bill pay a/i));

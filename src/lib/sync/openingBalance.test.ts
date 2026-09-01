@@ -84,8 +84,10 @@ describe('buildOpeningBalanceActivity', () => {
       'USD',
       'CASH',
     );
-    // earliestPosted 1754438400 -> 2025-08-06; one day before -> 2025-08-05
-    expect(activity?.date).toBe('2025-08-05');
+    // earliestPosted 1754438400 -> 2025-08-06; one day before -> 2025-08-05.
+    // Sent as a full instant for the same reason as a real transaction (see
+    // toActivityImport) — a bare date renders a day early outside UTC.
+    expect(activity?.date).toBe('2025-08-05T00:00:00.000Z');
   });
 
   it('falls back to the balance date when there is no transaction to anchor to', () => {
@@ -95,7 +97,7 @@ describe('buildOpeningBalanceActivity', () => {
       'USD',
       'CASH',
     );
-    expect(activity?.date).toBe('2025-08-07');
+    expect(activity?.date).toBe('2025-08-07T00:00:00.000Z');
   });
 
   it('sets symbol to an empty string, matching the host requirement for cash activities', () => {
