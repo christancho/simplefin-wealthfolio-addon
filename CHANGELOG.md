@@ -1,3 +1,11 @@
+## [1.1.1](https://github.com/christancho/simplefin-wealthfolio-addon/compare/v1.1.0...v1.1.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* date activities by a full RFC3339 instant, not a bare YYYY-MM-DD ([354415f](https://github.com/christancho/simplefin-wealthfolio-addon/commit/354415fdcd4cac68a9815f81d404e6fce3f8a6eb)), closes [6/PR#14](https://github.com/6/PR/issues/14)
+* drop synthetic opening-balance entry for credit-card accounts ([d19e611](https://github.com/christancho/simplefin-wealthfolio-addon/commit/d19e611b1a8dc7f15a5985f8e4840fa840dc51eb)), closes [#48](https://github.com/christancho/simplefin-wealthfolio-addon/issues/48) [#83](https://github.com/christancho/simplefin-wealthfolio-addon/issues/83)
+
 # [1.1.0](https://github.com/christancho/simplefin-wealthfolio-addon/compare/v1.0.0...v1.1.0) (2026-08-28)
 
 
