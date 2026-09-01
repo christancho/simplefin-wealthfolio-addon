@@ -16,6 +16,21 @@ export interface AccountRunResult {
   error: string | null;
   /** Set when SimpleFIN and Wealthfolio balances disagree after the run. */
   balanceMismatch: { simplefin: string; wealthfolio: string } | null;
+  /**
+   * Why the balance check couldn't run, or null when it did run and agreed.
+   * A clean run and a skipped check both leave `balanceMismatch` null, and
+   * reporting them the same way lets a credit card — which Wealthfolio never
+   * returns a balance for — read as "verified" when nothing was verified.
+   *
+   * Optional because runs recorded before this field existed carry neither
+   * value; `undefined` there means "unknown", not "checked".
+   */
+  balanceUnchecked?: string | null;
+  /**
+   * Non-fatal problem worth showing the user — the account still synced.
+   * Distinct from `error`, which means the account produced nothing.
+   */
+  warning?: string | null;
 }
 
 export interface SyncRun {

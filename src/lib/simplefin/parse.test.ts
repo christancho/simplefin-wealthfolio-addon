@@ -72,4 +72,38 @@ describe('parseAccountsResponse', () => {
   it('throws on a payload that is not an object', () => {
     expect(() => parseAccountsResponse('nope')).toThrow(/payload/i);
   });
+})
+
+/** `payload` with the given fields merged onto its first transaction. */
+const setWith = (over: Record<string, unknown>) => ({
+  ...payload,
+  accounts: [
+    {
+      ...payload.accounts[0],
+      transactions: [{ ...payload.accounts[0].transactions[0], ...over }],
+    },
+  ],
 });
+
+describe('transacted_at', () => {
+  it('parses transacted_at when the Bridge reports it', () => {
+    const { accounts } = parseAccountsResponse(setWith({ transacted_at: 1754179200 }));
+    expect(accounts[0].transactions[0].transactedAt).toBe(1754179200);
+  });
+
+  it('reports null when the Bridge omits it, so the date falls back to posted', () => {
+    const { accounts } = parseAccountsResponse(setWith({}));
+    expect(accounts[0].transactions[0].transactedAt).toBeNull();
+  });
+
+  it('treats a zero or negative epoch as absent rather than dating the row to 1970', () => {
+    expect(parseAccountsResponse(setWith({ transacted_at: 0 })).accounts[0].transactions[0].transactedAt).toBeNull();
+    expect(parseAccountsResponse(setWith({ transacted_at: -1 })).accounts[0].transactions[0].transactedAt).toBeNull();
+  });
+
+  it('treats a non-numeric value as absent', () => {
+    const { accounts } = parseAccountsResponse(setWith({ transacted_at: 'yesterday' }));
+    expect(accounts[0].transactions[0].transactedAt).toBeNull();
+  });
+});
+;

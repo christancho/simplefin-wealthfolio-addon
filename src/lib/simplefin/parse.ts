@@ -1,7 +1,14 @@
 export interface SfTransaction {
   id: string;
-  /** Epoch seconds, as the Bridge reports it. */
+  /** Epoch seconds, as the Bridge reports it — when the bank *settled* the transaction. */
   posted: number;
+  /**
+   * Epoch seconds for when the purchase actually happened, null when the
+   * Bridge doesn't report it. The protocol marks `transacted_at` optional and
+   * only guarantees `posted`, which can trail it by 1-3 days — see
+   * `activityEpoch` in `../sync/activities` for which one dates an activity.
+   */
+  transactedAt: number | null;
   /** Signed decimal string; negative means money out. Never parsed to a number. */
   amount: string;
   description: string;
@@ -48,6 +55,18 @@ function str(value: unknown, fallback = ''): string {
   return value === null || value === undefined || value === '' ? fallback : String(value);
 }
 
+/**
+ * Absent, null, blank, or non-numeric all mean "the Bridge didn't report it".
+ * So does a non-positive epoch: 0 is a plausible "unknown" sentinel, and
+ * taking it literally would date the activity to 1970 instead of falling back
+ * to `posted`.
+ */
+function optNum(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function optStr(value: unknown): string | null {
   return value === null || value === undefined || value === '' ? null : String(value);
 }
@@ -56,6 +75,7 @@ function parseTransaction(raw: Record<string, unknown>): SfTransaction {
   return {
     id: str(raw.id),
     posted: Number(raw.posted),
+    transactedAt: optNum(raw.transacted_at),
     amount: str(raw.amount),
     description: str(raw.description),
     payee: optStr(raw.payee),

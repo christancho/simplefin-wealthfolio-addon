@@ -70,7 +70,7 @@ describe('syncHoldingsAccount', () => {
     const result = await syncHoldingsAccount(host.api, mapping, account([holding()]) as never);
 
     expect(host.api.snapshots.importSnapshots).not.toHaveBeenCalled();
-    expect(result).toEqual({ imported: 0, skipped: 1 });
+    expect(result).toEqual({ imported: 0, skipped: 1, unresolvedSymbols: [] });
   });
 
   it('imports a snapshot for a new date', async () => {
@@ -89,7 +89,7 @@ describe('syncHoldingsAccount', () => {
     const result = await syncHoldingsAccount(host.api, mapping, account([holding()]) as never);
 
     expect(host.api.snapshots.importSnapshots).toHaveBeenCalledWith('WF-2', expect.any(Array));
-    expect(result).toEqual({ imported: 1, skipped: 0 });
+    expect(result).toEqual({ imported: 1, skipped: 0, unresolvedSymbols: [] });
   });
 
   it('throws when checkImport reports validation errors', async () => {
@@ -112,6 +112,68 @@ describe('syncHoldingsAccount', () => {
     const result = await syncHoldingsAccount(host.api, mapping, account([]) as never);
 
     expect(host.api.snapshots.checkImport).not.toHaveBeenCalled();
-    expect(result).toEqual({ imported: 0, skipped: 0 });
+    expect(result).toEqual({ imported: 0, skipped: 0, unresolvedSymbols: [] });
+  });
+
+  it('treats an ISO-instant existingDates entry as the same day, not a new snapshot', async () => {
+    // The host types existingDates as string[] without pinning the format and
+    // returns full ISO instants for activity dates elsewhere. Comparing raw
+    // would re-import the same snapshot on every run.
+    const host = createMockHost();
+    host.api.snapshots.checkImport = vi.fn(async () => ({
+      existingDates: ['2025-08-07T00:00:00.000Z'],
+      symbols: [],
+      validationErrors: [],
+    }));
+
+    const result = await syncHoldingsAccount(host.api, mapping, account([holding()]) as never);
+
+    expect(result).toMatchObject({ imported: 0, skipped: 1 });
+    expect(host.api.snapshots.importSnapshots).not.toHaveBeenCalled();
+  });
+
+  it('reports symbols Wealthfolio could not resolve, and imports them anyway', async () => {
+    // Dropping them would silently shrink the account's holdings; importing
+    // them silently would hide a mispriced position (a crypto BTC valued as an
+    // unrelated NASDAQ listing). Import, but surface it.
+    const host = createMockHost();
+    host.api.snapshots.checkImport = vi.fn(async () => ({
+      existingDates: [],
+      symbols: [
+        { symbol: 'BTC', found: false },
+        { symbol: 'VOO', found: true },
+      ],
+      validationErrors: [],
+    }));
+    host.api.snapshots.importSnapshots = vi.fn(async () => ({
+      snapshotsImported: 1,
+      snapshotsFailed: 0,
+      errors: [],
+    }));
+
+    const result = await syncHoldingsAccount(host.api, mapping, account([holding()]) as never);
+
+    expect(result.unresolvedSymbols).toEqual(['BTC']);
+    expect(host.api.snapshots.importSnapshots).toHaveBeenCalled();
+    expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining('BTC'));
+  });
+
+  it('reports no unresolved symbols when the host placed every one', async () => {
+    const host = createMockHost();
+    host.api.snapshots.checkImport = vi.fn(async () => ({
+      existingDates: [],
+      symbols: [{ symbol: 'VOO', found: true }],
+      validationErrors: [],
+    }));
+    host.api.snapshots.importSnapshots = vi.fn(async () => ({
+      snapshotsImported: 1,
+      snapshotsFailed: 0,
+      errors: [],
+    }));
+
+    const result = await syncHoldingsAccount(host.api, mapping, account([holding()]) as never);
+
+    expect(result.unresolvedSymbols).toEqual([]);
+    expect(host.api.logger.error).not.toHaveBeenCalled();
   });
 });

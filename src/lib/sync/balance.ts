@@ -22,15 +22,32 @@ export interface BalanceMismatch {
   wealthfolio: string;
 }
 
-export function compareBalances(
-  simplefin: string,
-  wealthfolio: string | null,
-): BalanceMismatch | null {
-  // No Wealthfolio figure means the check could not be computed — report
-  // nothing rather than inventing a comparison.
-  if (wealthfolio === null) return null;
+/**
+ * Wealthfolio reports no balance for an account absent from
+ * `getLatestValuations()`. Its own account-purpose policy excludes
+ * `CREDIT_CARD` from that response (it supports neither the Performance nor
+ * the Holdings purpose), so a card is always absent — the check is skipped,
+ * never failed.
+ */
+export const NO_WEALTHFOLIO_BALANCE =
+  'Wealthfolio reports no balance for this account (credit cards are excluded ' +
+  'from its valuations)';
 
-  return normalise(simplefin) === normalise(wealthfolio)
-    ? null
-    : { simplefin, wealthfolio };
+export interface BalanceCheck {
+  mismatch: BalanceMismatch | null;
+  /** Why the comparison couldn't be made, or null when it was made. */
+  unchecked: string | null;
+}
+
+export function compareBalances(simplefin: string, wealthfolio: string | null): BalanceCheck {
+  // No Wealthfolio figure means the check could not be computed. Reporting
+  // that as "no mismatch" would be indistinguishable from a passing check.
+  if (wealthfolio === null) {
+    return { mismatch: null, unchecked: NO_WEALTHFOLIO_BALANCE };
+  }
+
+  return {
+    mismatch: normalise(simplefin) === normalise(wealthfolio) ? null : { simplefin, wealthfolio },
+    unchecked: null,
+  };
 }

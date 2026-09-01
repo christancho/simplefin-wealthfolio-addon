@@ -67,24 +67,14 @@ describe('buildOpeningBalanceActivity', () => {
     expect(activity?.amount).toBe('30.00');
   });
 
-  it('builds a CREDIT instead of a DEPOSIT on a credit-card account', () => {
+  it('returns null on a credit-card account even when the balances disagree', () => {
     const activity = buildOpeningBalanceActivity(
       { sfBalance: '100.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
       mapping,
       'USD',
       'CREDIT_CARD',
     );
-    expect(activity?.activityType).toBe('CREDIT');
-  });
-
-  it('still builds a WITHDRAWAL (not CREDIT) on a credit-card account when Wealthfolio holds more', () => {
-    const activity = buildOpeningBalanceActivity(
-      { sfBalance: '50.00', wfBalance: '80.00', earliestPosted: 1754438400, balanceDate: 1754524800 },
-      mapping,
-      'USD',
-      'CREDIT_CARD',
-    );
-    expect(activity?.activityType).toBe('WITHDRAWAL');
+    expect(activity).toBeNull();
   });
 
   it('dates the entry one day before the earliest posted transaction', () => {
@@ -94,8 +84,10 @@ describe('buildOpeningBalanceActivity', () => {
       'USD',
       'CASH',
     );
-    // earliestPosted 1754438400 -> 2025-08-06; one day before -> 2025-08-05
-    expect(activity?.date).toBe('2025-08-05');
+    // earliestPosted 1754438400 -> 2025-08-06; one day before -> 2025-08-05.
+    // Sent as a full instant for the same reason as a real transaction (see
+    // toActivityImport) — a bare date renders a day early outside UTC.
+    expect(activity?.date).toBe('2025-08-05T00:00:00.000Z');
   });
 
   it('falls back to the balance date when there is no transaction to anchor to', () => {
@@ -105,7 +97,7 @@ describe('buildOpeningBalanceActivity', () => {
       'USD',
       'CASH',
     );
-    expect(activity?.date).toBe('2025-08-07');
+    expect(activity?.date).toBe('2025-08-07T00:00:00.000Z');
   });
 
   it('sets symbol to an empty string, matching the host requirement for cash activities', () => {
