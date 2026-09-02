@@ -110,6 +110,34 @@ describe('runSync', () => {
     expect(second?.imported).toBe(1);
   });
 
+  it('registers imported activities in the mapped Wealthfolio account currency, not the Bridge currency', async () => {
+    // Regression test: `bridgePayload` reports 'USD' for both accounts, but a
+    // Wealthfolio account is the source of truth for what currency it holds —
+    // this addon does no FX conversion, so pushing the Bridge's currency
+    // instead silently mislabeled every transaction.
+    const host = okHost();
+    await writeWatermark(host.api, 'WF-1', { lastPosted: 1754438400 - 86_400, recentIds: [] });
+    await writeWatermark(host.api, 'WF-2', { lastPosted: 1754438400 - 86_400, recentIds: [] });
+    host.api.accounts.getAll = vi.fn(async () => [
+      { id: 'WF-1', accountType: 'CASH', currency: 'CAD', balance: 0 },
+      { id: 'WF-2', accountType: 'CASH', currency: 'EUR', balance: 0 },
+    ] as never);
+    const importedRows: ActivityImport[] = [];
+    host.api.activities.import = vi.fn(async (rows: ActivityImport[]) => {
+      importedRows.push(...rows);
+      return {
+        activities: [],
+        importRunId: 'R',
+        summary: { total: rows.length, imported: rows.length, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+      };
+    });
+
+    await runSync(host.api, config);
+
+    expect(importedRows.find((r) => r.accountId === 'WF-1')?.currency).toBe('CAD');
+    expect(importedRows.find((r) => r.accountId === 'WF-2')?.currency).toBe('EUR');
+  });
+
   it('records bridge errors without aborting the run', async () => {
     const host = createMockHost();
     host.respond(/\/accounts/, {

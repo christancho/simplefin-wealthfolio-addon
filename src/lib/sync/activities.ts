@@ -146,6 +146,7 @@ export async function syncCashAccount(
   sfAccount: SfAccount,
   watermark: Watermark,
   accountType: AccountType,
+  currency: string,
   paymentKeywords: string[],
   transferKeywords: string[],
 ): Promise<{
@@ -167,7 +168,7 @@ export async function syncCashAccount(
     };
   }
 
-  const rows = candidates.map((t) => toActivityImport(t, mapping, sfAccount.currency, accountType));
+  const rows = candidates.map((t) => toActivityImport(t, mapping, currency, accountType));
   let checked;
   try {
     checked = await api.activities.checkImport(rows);
@@ -282,10 +283,10 @@ export async function syncCashAccount(
   const stagedCandidates =
     accountType === 'CREDIT_CARD'
       ? inflowTxns
-          .map((t) => detectCandidate(t, mapping, paymentKeywords, 'CREDIT', sfAccount.currency))
+          .map((t) => detectCandidate(t, mapping, paymentKeywords, 'CREDIT', currency))
           .filter((c): c is StagedCandidate => c !== null)
       : inflowTxns
-          .map((t) => detectCandidate(t, mapping, transferKeywords, 'DEPOSIT', sfAccount.currency))
+          .map((t) => detectCandidate(t, mapping, transferKeywords, 'DEPOSIT', currency))
           .filter((c): c is StagedCandidate => c !== null);
 
   return {
