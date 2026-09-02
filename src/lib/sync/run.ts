@@ -71,6 +71,7 @@ async function pushOpeningBalance(
   preSyncBalance: string | null,
   importedTxns: SfTransaction[],
   destinationAccountType: AccountType,
+  currency: string,
 ): Promise<number> {
   const wfBalance = sumDecimal([preSyncBalance ?? '0', ...importedTxns.map((t) => t.amount)]);
 
@@ -90,7 +91,7 @@ async function pushOpeningBalance(
       balanceDate: sfAccount.balanceDate,
     },
     mapping,
-    sfAccount.currency,
+    currency,
     destinationAccountType,
   );
   if (!plug) return 0;
@@ -109,6 +110,7 @@ async function syncOne(
   sfAccount: SfAccount | undefined,
   wfBalances: Map<string, string>,
   wfAccountTypes: Map<string, AccountType>,
+  wfAccountCurrencies: Map<string, string>,
   paymentKeywords: string[],
   transferKeywords: string[],
 ): Promise<{ accountResult: AccountRunResult; candidates: StagedCandidate[] }> {
@@ -179,6 +181,12 @@ async function syncOne(
       : sfAccount;
 
     const destinationAccountType = wfAccountTypes.get(mapping.wfAccountId) ?? 'CASH';
+    // Activities register in the Wealthfolio account's own currency, not
+    // whatever the Bridge reports for the source account — this addon does no
+    // FX conversion, so the two must agree. Falls back to the Bridge's
+    // currency only if the account lookup above came back empty (e.g. the
+    // diagnostic `accounts.getAll()` read failed).
+    const destinationCurrency = wfAccountCurrencies.get(mapping.wfAccountId) ?? syncSfAccount.currency;
     const {
       result,
       watermark: next,
@@ -190,6 +198,7 @@ async function syncOne(
       syncSfAccount,
       watermark,
       destinationAccountType,
+      destinationCurrency,
       paymentKeywords,
       transferKeywords,
     );
@@ -203,6 +212,7 @@ async function syncOne(
           wfBalances.get(mapping.wfAccountId) ?? null,
           importedTxns,
           destinationAccountType,
+          destinationCurrency,
         )
       : 0;
 
@@ -278,9 +288,11 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
   // a live host that `accounts.getAll()` doesn't carry a `balance` field at all.
   const wfBalances = new Map<string, string>();
   const wfAccountTypes = new Map<string, AccountType>();
+  const wfAccountCurrencies = new Map<string, string>();
   try {
     for (const account of await api.accounts.getAll()) {
       wfAccountTypes.set(account.id, account.accountType);
+      wfAccountCurrencies.set(account.id, account.currency);
     }
     await api.portfolio.recalculate();
     const valuations = await api.portfolio.getLatestValuations(
@@ -309,6 +321,7 @@ export async function runSync(api: HostAPI, config: SyncConfig): Promise<SyncRun
       bySfId.get(mapping.sfAccountId),
       wfBalances,
       wfAccountTypes,
+      wfAccountCurrencies,
       config.paymentKeywords,
       config.transferKeywords,
     );
