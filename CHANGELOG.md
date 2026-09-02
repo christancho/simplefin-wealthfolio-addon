@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/christancho/simplefin-wealthfolio-addon/compare/v1.1.1...v1.1.2) (2026-09-02)
+
+
+### Bug Fixes
+
+* register imported activities in the mapped Wealthfolio account's currency ([00bd8e4](https://github.com/christancho/simplefin-wealthfolio-addon/commit/00bd8e46565b5c603a35b1f18c607caf32f73f22)), closes [#96](https://github.com/christancho/simplefin-wealthfolio-addon/issues/96)
+
 ## [1.1.1](https://github.com/christancho/simplefin-wealthfolio-addon/compare/v1.1.0...v1.1.1) (2026-09-01)
 
 
