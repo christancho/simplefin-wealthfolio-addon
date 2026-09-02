@@ -199,6 +199,7 @@ describe('syncCashAccount', () => {
       account([txn({ pending: true })]) as never,
       emptyWatermark(),
       'CASH',
+      'USD',
       [],
       [],
     );
@@ -216,6 +217,7 @@ describe('syncCashAccount', () => {
       account([txn()]) as never,
       { lastPosted: 1754438400, recentIds: ['TXN-1'] },
       'CASH',
+      'USD',
       [],
       [],
     );
@@ -239,7 +241,7 @@ describe('syncCashAccount', () => {
       };
     });
 
-    await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []);
+    await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], []);
     expect(order).toEqual(['check', 'import']);
   });
 
@@ -250,7 +252,7 @@ describe('syncCashAccount', () => {
     );
     host.api.activities.import = vi.fn();
 
-    const { result } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []);
+    const { result } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], []);
 
     expect(host.api.activities.import).not.toHaveBeenCalled();
     expect(result.duplicates).toBe(1);
@@ -263,7 +265,7 @@ describe('syncCashAccount', () => {
     );
     host.api.activities.import = vi.fn();
 
-    const { result } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []);
+    const { result } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], []);
 
     expect(host.api.activities.import).not.toHaveBeenCalled();
     expect(result.skipped).toBe(1);
@@ -278,10 +280,40 @@ describe('syncCashAccount', () => {
       summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
     }));
 
-    const { watermark } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []);
+    const { watermark } = await syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], []);
 
     expect(watermark.lastPosted).toBe(1754438400);
     expect(watermark.recentIds).toContain('TXN-1');
+  });
+
+  it('registers activities in the mapped Wealthfolio account currency, not whatever the Bridge reports', async () => {
+    // Regression test: the Bridge's `sfAccount.currency` was being sent as-is,
+    // so a CAD Wealthfolio account mapped to a Bridge account reporting USD
+    // (or no currency at all) imported every transaction tagged USD.
+    const host = createMockHost();
+    host.api.activities.checkImport = vi.fn(async (a: ActivityImport[]) => a.map((row) => ({ ...row, isValid: true })));
+    let importedRows: ActivityImport[] = [];
+    host.api.activities.import = vi.fn(async (rows: ActivityImport[]) => {
+      importedRows = rows;
+      return {
+        activities: [],
+        importRunId: 'R1',
+        summary: { total: 1, imported: 1, skipped: 0, duplicates: 0, assetsCreated: 0, success: true },
+      };
+    });
+
+    await syncCashAccount(
+      host.api,
+      mapping,
+      account([txn()]) as never, // account().currency is 'USD'
+      emptyWatermark(),
+      'CASH',
+      'CAD',
+      [],
+      [],
+    );
+
+    expect(importedRows[0].currency).toBe('CAD');
   });
 
   it('fails the account when the host lands fewer rows than were submitted', async () => {
@@ -303,6 +335,7 @@ describe('syncCashAccount', () => {
         account([txn(), txn({ id: 'TXN-2', posted: 1754524800 })]) as never,
         emptyWatermark(),
         'CASH',
+        'USD',
         [],
         [],
       ),
@@ -319,7 +352,7 @@ describe('syncCashAccount', () => {
     }));
 
     await expect(
-      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []),
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], []),
     ).rejects.toThrow(/success=false/);
   });
 
@@ -336,7 +369,7 @@ describe('syncCashAccount', () => {
     }));
 
     const { watermark } = await syncCashAccount(
-      host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], [],
+      host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], [],
     );
     expect(watermark.recentIds).toContain('TXN-1');
   });
@@ -349,7 +382,7 @@ describe('syncCashAccount', () => {
     });
 
     await expect(
-      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []),
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], []),
     ).rejects.toThrow(/host exploded/);
   });
 
@@ -360,7 +393,7 @@ describe('syncCashAccount', () => {
     });
 
     await expect(
-      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []),
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], []),
     ).rejects.toThrow(/Unprocessable Entity/);
 
     expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining(mapping.sfAccountName));
@@ -375,7 +408,7 @@ describe('syncCashAccount', () => {
     });
 
     await expect(
-      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', [], []),
+      syncCashAccount(host.api, mapping, account([txn()]) as never, emptyWatermark(), 'CASH', 'USD', [], []),
     ).rejects.toThrow(/Unprocessable Entity/);
 
     expect(host.api.logger.error).toHaveBeenCalledWith(expect.stringContaining(mapping.sfAccountName));
@@ -401,6 +434,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '50.00', payee: 'Card Payment' })]) as never,
       emptyWatermark(),
       'CREDIT_CARD',
+      'USD',
       [],
       [],
     );
@@ -423,6 +457,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '75.00', payee: 'Online Payment Thank You' })]) as never,
       emptyWatermark(),
       'CREDIT_CARD',
+      'USD',
       ['PAYMENT'],
       [],
     );
@@ -447,6 +482,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '75.00', payee: 'Amazon Refund' })]) as never,
       emptyWatermark(),
       'CREDIT_CARD',
+      'USD',
       ['PAYMENT'],
       [],
     );
@@ -458,6 +494,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '-75.00', payee: 'Payment Center' })]) as never,
       emptyWatermark(),
       'CREDIT_CARD',
+      'USD',
       ['PAYMENT'],
       [],
     );
@@ -470,6 +507,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '75.00', payee: 'Online Transfer From Checking' })]) as never,
       emptyWatermark(),
       'CREDIT_CARD',
+      'USD',
       ['PAYMENT'],
       ['TRANSFER'],
     );
@@ -491,6 +529,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '200.00', payee: 'Online Transfer From Checking' })]) as never,
       emptyWatermark(),
       'CASH',
+      'USD',
       [],
       ['TRANSFER'],
     );
@@ -515,6 +554,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '200.00', payee: 'Employer Payroll' })]) as never,
       emptyWatermark(),
       'CASH',
+      'USD',
       [],
       ['TRANSFER'],
     );
@@ -526,6 +566,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '-200.00', payee: 'Online Transfer To Savings' })]) as never,
       emptyWatermark(),
       'CASH',
+      'USD',
       [],
       ['TRANSFER'],
     );
@@ -538,6 +579,7 @@ describe('syncCashAccount', () => {
       account([txn({ amount: '200.00', payee: 'Online Payment Thank You' })]) as never,
       emptyWatermark(),
       'CASH',
+      'USD',
       ['PAYMENT'],
       ['TRANSFER'],
     );
